@@ -86,6 +86,7 @@ const CONFIG = {
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
   PED_RUSH_CHANCE: 0.12,// 方向転換時に急ぎ足になる確率
   PED_AVOID_R: 1.8,     // この距離まで近づくとプレイヤーを避け始める
+  PED_DODGE_SPEED: 6.5, // ぶつかった瞬間に素早く退く速さ
 
   STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
   STAIR_LEN: 3,         // 階段の長さ（マス数）
@@ -183,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.25";
+  const APP_VERSION = "Ver.26";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -832,14 +833,17 @@ const CONFIG = {
         if(p.rush<=0 && Math.random()<C.PED_RUSH_CHANCE) p.rush=1.2+Math.random()*1.8; // 一時的に急ぎ足
       }
       if(p.rush>0) p.rush-=dt;
-      let vx=Math.cos(p.dir), vz=Math.sin(p.dir);
+      let vx=Math.cos(p.dir), vz=Math.sin(p.dir), dodge=false;
       // プレイヤーが近づいたら、ぎりぎりで避ける（同じフロアのみ）
       if(p.level===player.level){
         const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
-        if(d<PA && d>0.001){ const w=(PA-d)/PA*2.4; vx+=dx/d*w; vz+=dz/d*w; }
+        if(d<PA && d>0.001){
+          const w=(PA-d)/PA*2.4; vx+=dx/d*w; vz+=dz/d*w;
+          if(d<1.1){ vx=dx/d; vz=dz/d; dodge=true; p.dir=Math.atan2(vz,vx); } // 接触：真後ろへ素早く退く
+        }
       }
       const L=Math.hypot(vx,vz); if(L>0){ vx/=L; vz/=L; }
-      const sp = p.rush>0 ? C.PED_RUSH_SPEED : C.PED_SPEED;
+      const sp = dodge ? C.PED_DODGE_SPEED : (p.rush>0 ? C.PED_RUSH_SPEED : C.PED_SPEED);
       const nx=vx*sp*dt, nz=vz*sp*dt;
       let moved=false;
       if(canStandPed(p.x+nx,p.z,PED_R,p.level)){ p.x+=nx; moved=true; }
