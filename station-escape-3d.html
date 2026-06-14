@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.50";
+  const APP_VERSION = "Ver.51";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -712,6 +712,56 @@ const CONFIG = {
     }
   }
 
+  // デパートの出入口（装飾。壁の手前に設置するだけで床(grids)は掘らない＝プレイヤーは通れない）
+  function deptSignTex(){
+    const cv=document.createElement("canvas"); cv.width=512; cv.height=128; const g=cv.getContext("2d");
+    g.fillStyle="#8a1f3a"; g.fillRect(0,0,512,128);
+    g.strokeStyle="#f3d9a0"; g.lineWidth=6; g.strokeRect(6,6,500,116);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle";
+    g.font="bold 60px sans-serif"; g.fillText("デパート", 256, 48);
+    g.font="bold 26px sans-serif"; g.fillText("DEPARTMENT STORE", 256, 96);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function deptGlassTex(){
+    const cv=document.createElement("canvas"); cv.width=256; cv.height=256; const g=cv.getContext("2d");
+    const grad=g.createLinearGradient(0,0,0,256);
+    grad.addColorStop(0,"#1d4a5e"); grad.addColorStop(0.62,"#14303d"); grad.addColorStop(1,"#caa45c"); // 下に店内の暖色グロー
+    g.fillStyle=grad; g.fillRect(0,0,256,256);
+    g.strokeStyle="#cfd6db"; g.lineWidth=12; g.strokeRect(6,6,244,244);
+    g.beginPath(); g.moveTo(128,6); g.lineTo(128,250); g.stroke();   // 中央の方立
+    g.fillStyle="#dfe6ea"; g.fillRect(106,122,8,42); g.fillRect(142,122,8,42); // 取っ手
+    g.strokeStyle="rgba(255,255,255,0.16)"; g.lineWidth=16; g.beginPath(); g.moveTo(44,0); g.lineTo(128,256); g.stroke(); // 反射
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildDeptEntrances(f){
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+    const cand=[];
+    for(let y=2;y<C.ROWS-2;y++)for(let x=2;x<C.COLS-2;x++){
+      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+      for(const [dx,dy] of dirs){ if(gWall(f,x+dx,y+dy)){ cand.push({x,y,dx,dy}); break; } }
+    }
+    for(let i=cand.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [cand[i],cand[j]]=[cand[j],cand[i]]; }
+    const signMat=new THREE.MeshBasicMaterial({map:deptSignTex(),side:THREE.DoubleSide});
+    const glassMat=new THREE.MeshBasicMaterial({map:deptGlassTex(),side:THREE.DoubleSide});
+    const frameMat=new THREE.MeshLambertMaterial({color:0x3a4047,side:THREE.DoubleSide});
+    const base=(f-1)*FH, want=4+((Math.random()*2)|0); // 4〜5カ所
+    const placed=[];
+    for(const c of cand){
+      if(placed.length>=want) break;
+      if(placed.some(p=>Math.abs(p.x-c.x)+Math.abs(p.y-c.y)<8)) continue;
+      placed.push(c);
+      const w=tileToWorld(c.x,c.y);
+      const fx=w.x+c.dx*(T/2-0.06), fz=w.z+c.dy*(T/2-0.06);  // 壁手前
+      const bx=w.x+c.dx*(T/2-0.02), bz=w.z+c.dy*(T/2-0.02);  // 枠は少し奥
+      const frame=new THREE.Mesh(new THREE.PlaneGeometry(4.0,3.4), frameMat);
+      frame.position.set(bx, base+1.7, bz); frame.lookAt(w.x, base+1.7, w.z); worldRoot.add(frame);
+      const door=new THREE.Mesh(new THREE.PlaneGeometry(3.4,2.6), glassMat);
+      door.position.set(fx, base+1.3, fz); door.lookAt(w.x, base+1.3, w.z); worldRoot.add(door);
+      const sgn=new THREE.Mesh(new THREE.PlaneGeometry(3.8,0.9), signMat);
+      sgn.position.set(fx, base+3.15, fz); sgn.lookAt(w.x, base+3.15, w.z); worldRoot.add(sgn);
+    }
+  }
+
   // 地下2階の描画：中央の柱/売店/看板/ゴミ箱（小さい当たり判定）、線路の電車、境界壁
   function buildPlatform(){
     platObstacles=[];
@@ -880,6 +930,7 @@ const CONFIG = {
       });
       buildYellowLines(f);
       buildPosters(f);
+      if(f===2) buildDeptEntrances(f);   // 地下1階の壁にデパート出入口（装飾・通行不可）
     }
 
     // 追跡者（赤い人型・歩行者と同じ大きさ）を指定階に配置
