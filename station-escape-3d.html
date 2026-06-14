@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.28";
+  const APP_VERSION = "Ver.29";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -391,11 +391,11 @@ const CONFIG = {
   const legMat=new THREE.MeshLambertMaterial({color:0x2c3038});
   // 敵(赤)と紛らわしいので赤系は入れない
   const clothColors=[0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0xb0892f,0x2f6f73,0x445064,0xcfcfcf];
-  function makeHuman(cloth, legColor){
+  function makeHuman(cloth, legColor, headColor){
     const g=new THREE.Group();
     const legs=new THREE.Mesh(legGeo, legColor?new THREE.MeshLambertMaterial({color:legColor}):legMat); legs.position.y=0.4;
     const torso=new THREE.Mesh(torsoGeo,new THREE.MeshLambertMaterial({color:cloth})); torso.position.y=1.05;
-    const head=new THREE.Mesh(headGeo,skinMat); head.position.y=1.5;
+    const head=new THREE.Mesh(headGeo, headColor?new THREE.MeshLambertMaterial({color:headColor}):skinMat); head.position.y=1.5;
     g.add(legs,torso,head); return g;
   }
 
@@ -613,7 +613,9 @@ const CONFIG = {
     const usedSpawns=[];
     C.CHASER_FLOORS.forEach(lvl=>{
       const cw=spawnOnFloor(lvl, usedSpawns);
-      const g=makeHuman(0xcc2a2a,0x5a1010); g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
+      const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
+      g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
+      g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
       chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z });
     });
 
@@ -672,15 +674,15 @@ const CONFIG = {
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
       // 小さな出口看板を、外へ続く上り階段の横に立てる
       const perpx=c.oy, perpz=c.ox;                  // 外向きと直交する横方向
-      const ph=topBase+1.7;
-      const sx=mx + c.ox*T*0.35 + perpx*T*0.6, sz=mz + c.oy*T*0.35 + perpz*T*0.6;
-      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.32,T*0.32),
+      const ph=topBase+1.6;
+      const sx=mx + c.ox*T*0.55 + perpx*T*0.7, sz=mz + c.oy*T*0.55 + perpz*T*0.7;
+      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.22,T*0.22),
         new THREE.MeshBasicMaterial({map:exitSignTexture(no),side:THREE.DoubleSide}));
       panel.position.set(sx, ph, sz);
       panel.lookAt(w.x, ph, w.z);                    // 構内側（プレイヤー側）を向く
       worldRoot.add(panel);
       // 看板を支える細いポール
-      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph-topBase, 0.1),
+      const post=new THREE.Mesh(new THREE.BoxGeometry(0.08, ph-topBase, 0.08),
         new THREE.MeshLambertMaterial({color:0x8b9197}));
       post.position.set(sx, topBase+(ph-topBase)/2, sz); worldRoot.add(post);
       // 外の白い上り階段＋明るい空（最上階の高さから）
