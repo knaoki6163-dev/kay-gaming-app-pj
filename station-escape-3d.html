@@ -91,7 +91,7 @@ const CONFIG = {
   PED_AVOID_R: 1.8,     // この距離まで近づくとプレイヤーを避け始める
   PED_DODGE_SPEED: 6.5, // ぶつかった瞬間に素早く退く速さ
 
-  STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
+  STAIR_COUNT: 4,       // 地下1階→地上の階段の数
   STAIR_LEN: 3,         // 階段の長さ（マス数）
   START_CLEAR: 8,       // スタート地点からこのマス数以内には階段を置かない
 
@@ -187,7 +187,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.40";
+  const APP_VERSION = "Ver.41";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
