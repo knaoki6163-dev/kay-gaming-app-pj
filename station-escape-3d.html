@@ -13,7 +13,8 @@
 
   #hud { position:fixed; top:0; left:0; right:0; padding:10px 14px; pointer-events:none;
     text-align:center; text-shadow:0 1px 3px #000; }
-  #goal { font-size:18px; font-weight:bold; }
+  #goal { font-size:30px; font-weight:900; color:#ffe33a; letter-spacing:1px;
+    text-shadow:0 0 6px rgba(0,0,0,.9), 0 2px 4px #000; }
   #sub  { font-size:12px; color:#cdd3da; margin-top:2px; }
 
   #floor { position:fixed; top:8px; left:10px; z-index:8; font-size:15px; font-weight:bold;
@@ -78,6 +79,7 @@ const CONFIG = {
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
+  B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
@@ -185,7 +187,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.37";
+  const APP_VERSION = "Ver.38";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -294,14 +296,14 @@ const CONFIG = {
   const TRACKS=[[0,1],[5,6],[10,11],[15,16],[20,21],[25,26]]; // 線路(電車)
   const PLAT_TOP=6, PLAT_BOT=42, TOP_Y0=3, BOT_Y0=43;        // ホームは y=6..42、階段は両端(上y3〜/下y43〜)
   const CENTER_COLS=LANES.map(l=>l[0]+1);                     // 各ホームの中央列
-  const OBJ_ROWS=[]; for(let _y=PLAT_TOP+1;_y<=PLAT_BOT-2;_y+=4) OBJ_ROWS.push(_y);
-  function objType(y){ const i=((y-(PLAT_TOP+1))/4)|0; return i%5===1?"kiosk":(i%5===2?"sign":(i%5===3?"trash":"pillar")); }
+  const OBJ_ROWS=[]; for(let _y=PLAT_TOP+2;_y<=PLAT_BOT-2;_y+=2) OBJ_ROWS.push(_y); // 中央に等間隔・多めに
+  function objType(y){ const i=((y-PLAT_TOP)/2)|0; return i%8===3?"kiosk":(i%8===5?"sign":(i%8===7?"trash":"pillar")); }
   function inLane(x){ return LANES.some(l=>x>=l[0]&&x<=l[1]); }
   function isTrainZone(x,y){ return TRACKS.some(l=>x>=l[0]&&x<=l[1]) && y>=PLAT_TOP && y<=PLAT_BOT; }
   function generatePlatformFloor(){
     const g=[]; for(let y=0;y<C.ROWS;y++) g.push(new Array(C.COLS).fill(1));
+    // ホームは全面床。中央の柱などは壁にせず小さい円の当たり判定で扱う
     for(const [x0,x1] of LANES) for(let y=PLAT_TOP;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++) g[y][x]=0;
-    for(const [x0,x1] of LANES){ const xc=x0+1; for(const y of OBJ_ROWS) g[y][xc]=1; }
     return g;
   }
   function generateAllFloors(){
@@ -619,6 +621,8 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.wrapS=THREE.RepeatWrapping; t.anisotropy=4; return t;
   }
   let boarders=[]; // 開いたドアから乗降する人
+  let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
+  function obstacleHit(x,z,extra){ for(const o of platObstacles){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; } return false; }
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
@@ -626,9 +630,10 @@ const CONFIG = {
 
   // 各フロアの天井（上階スラブの肌色裏面が見えないよう、白めグレーの天井を貼る。階段マスは抜く）
   function buildFloorCeilings(f){
-    const h=f*FH-0.03, hw=T/2, verts=[], uvs=[];
+    const h=f*FH-0.03, hw=T/2, verts=[], uvs=[], coverAll=(f===1);
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+      if(stairTileSet.has(x+","+y)) continue;          // 階段の吹き抜けだけ抜く
+      if(!coverAll && grids[f][y][x]!==0) continue;     // 地下2階は全面、上階は床のみ
       const c=tileToWorld(x,y), x0=c.x-hw, x1=c.x+hw, z0=c.z-hw, z1=c.z+hw;
       verts.push(x0,h,z0, x1,h,z0, x1,h,z1,  x0,h,z0, x1,h,z1, x0,h,z1);
       uvs.push(0,0, 1,0, 1,1,  0,0, 1,1, 0,1);
@@ -645,7 +650,7 @@ const CONFIG = {
     const h=0.06, wHalf=0.18, verts=[];
     const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T;
     const line=(cx)=>{ verts.push(cx-wHalf,h,z0, cx+wHalf,h,z0, cx+wHalf,h,z1,  cx-wHalf,h,z0, cx+wHalf,h,z1, cx-wHalf,h,z1); };
-    for(const [x0,x1] of LANES){ line((x0+0.5)*T); line((x1+0.5)*T); }  // 左右の縁
+    for(const [x0,x1] of LANES){ line(x0*T + wHalf+0.15); line((x1+1)*T - wHalf-0.15); }  // ホームの縁(電車側)に寄せる
     const geo=new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
     worldRoot.add(new THREE.Mesh(geo, yellowMat));
@@ -731,23 +736,28 @@ const CONFIG = {
     }
   }
 
-  // 地下2階の描画：中央の柱/売店/看板/ゴミ箱、線路の電車（窓・ドア・乗降客）、境界壁
+  // 地下2階の描画：中央の柱/売店/看板/ゴミ箱（小さい当たり判定）、線路の電車、境界壁
   function buildPlatform(){
+    platObstacles=[];
+    // 中央列のオブジェクト（壁ではなく小さい円の当たり判定）
+    for(const [x0,x1] of LANES){ const xc=x0+1;
+      for(const y of OBJ_ROWS){
+        const w=tileToWorld(xc,y); const t=objType(y); let m,r;
+        if(t==="pillar"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.6,FH,0.6),pillarMat); m.position.set(w.x,FH/2,w.z); r=0.32; }
+        else if(t==="kiosk"){ m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9),kioskMat); m.position.set(w.x,FH*0.35,w.z); r=2.0; } // 人より大きい遮蔽物
+        else if(t==="trash"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.0,0.7),trashMat); m.position.set(w.x,0.5,w.z); r=0.36; }
+        else { m=new THREE.Mesh(new THREE.BoxGeometry(T*0.7,1.7,0.16),signMat); m.position.set(w.x,1.6,w.z); r=0.4; }
+        worldRoot.add(m);
+        platObstacles.push({x:w.x, z:w.z, r});
+      }
+    }
+    // 壁（境界など。中央オブジェクトはもう壁ではない）
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(grids[1][y][x]!==1) continue;
       if(stairTileSet.has(x+","+y)) continue;        // 階段は別描画
       if(isTrainZone(x,y)) continue;                 // 線路は電車でまとめて描画
       const w=tileToWorld(x,y);
-      if(CENTER_COLS.includes(x) && OBJ_ROWS.includes(y)){
-        const t=objType(y); let m;
-        if(t==="pillar"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.7,FH,0.7),pillarMat); m.position.set(w.x,FH/2,w.z); }
-        else if(t==="kiosk"){ m=new THREE.Mesh(new THREE.BoxGeometry(T*0.95,FH*0.7,T*0.95),kioskMat); m.position.set(w.x,FH*0.35,w.z); } // 人より大きい遮蔽物
-        else if(t==="trash"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.8,1.0,0.8),trashMat); m.position.set(w.x,0.5,w.z); }
-        else { m=new THREE.Mesh(new THREE.BoxGeometry(T*0.8,1.8,0.16),signMat); m.position.set(w.x,1.6,w.z); }
-        worldRoot.add(m);
-      } else {
-        const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,FH/2,w.z); worldRoot.add(seg);
-      }
+      const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,FH/2,w.z); worldRoot.add(seg);
     }
     // 電車（窓・ドア付き／一部ドアは開いて乗降客）
     boarders=[];
@@ -1041,7 +1051,7 @@ const CONFIG = {
     const s=platformStartTile();    // 5つのホームのどれかをランダムに選んで開始（ホームを記録）
     buildWorld();                   // 地下2階の敵を同じホームに置くため開始ホーム確定後に構築
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
-    goalEl.textContent="目標："+correctExitNo+"番出口（地上）から脱出せよ";
+    goalEl.textContent="▶ "+correctExitNo+"番出口（地上）へ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
@@ -1070,6 +1080,7 @@ const CONFIG = {
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
+    if(player.level===1 && obstacleHit(x,z,0.45)) return false;   // 中央の柱など（小さい当たり判定）
     for(const p of pedestrians){ if(p.level===player.level && Math.hypot(x-p.x,z-p.z)<PED_R+0.35) return false; }
     return true;
   }
@@ -1089,16 +1100,17 @@ const CONFIG = {
     camera.position.set(player.x, player.y+C.EYE_HEIGHT, player.z);
   }
 
+  function entCanStand(x,z,r,f){ return canStand(x,z,r,f) && !(f===1 && obstacleHit(x,z,0.3)); }
   function moveToward(ent,tx,tz,speed,dt,r){
     const f=ent.level;
     let dx=tx-ent.x, dz=tz-ent.z; const len=Math.hypot(dx,dz);
     if(len>0.001){ dx=dx/len*speed*dt; dz=dz/len*speed*dt;
       const bx=ent.x,bz=ent.z;
-      if(canStand(ent.x+dx,ent.z,r,f)) ent.x+=dx;
-      if(canStand(ent.x,ent.z+dz,r,f)) ent.z+=dz;
+      if(entCanStand(ent.x+dx,ent.z,r,f)) ent.x+=dx;
+      if(entCanStand(ent.x,ent.z+dz,r,f)) ent.z+=dz;
       if(ent.x===bx&&ent.z===bz){
         const alt=Math.abs(dx)>Math.abs(dz)?[[0,speed*dt],[0,-speed*dt]]:[[speed*dt,0],[-speed*dt,0]];
-        for(const [ax,az] of alt){ if(canStand(ent.x+ax,ent.z+az,r,f)){ent.x+=ax;ent.z+=az;break;} }
+        for(const [ax,az] of alt){ if(entCanStand(ent.x+ax,ent.z+az,r,f)){ent.x+=ax;ent.z+=az;break;} }
       }
     }
   }
@@ -1108,7 +1120,7 @@ const CONFIG = {
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
       const see=same && d<C.CHASER_SIGHT && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
-      if(see){ chaser.mem=C.CHASER_MEMORY; chaser.lx=player.x; chaser.lz=player.z; }
+      if(see){ chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY); chaser.lx=player.x; chaser.lz=player.z; } // 地下2階の敵は追尾が長い
       if(chaser.mem>0) chaser.mem-=dt;
       const chasing=chaser.mem>0;
       chaser.state = chasing? (see?"発見・追跡":"捜索") : "徘徊";
@@ -1155,8 +1167,9 @@ const CONFIG = {
       const sp = dodge ? C.PED_DODGE_SPEED : (p.rush>0 ? C.PED_RUSH_SPEED : C.PED_SPEED);
       const nx=vx*sp*dt, nz=vz*sp*dt;
       let moved=false;
-      if(canStandPed(p.x+nx,p.z,PED_R,p.level)){ p.x+=nx; moved=true; }
-      if(canStandPed(p.x,p.z+nz,PED_R,p.level)){ p.z+=nz; moved=true; }
+      const pf=p.level;
+      if(canStandPed(p.x+nx,p.z,PED_R,pf) && !(pf===1&&obstacleHit(p.x+nx,p.z,0.3))){ p.x+=nx; moved=true; }
+      if(canStandPed(p.x,p.z+nz,PED_R,pf) && !(pf===1&&obstacleHit(p.x,p.z+nz,0.3))){ p.z+=nz; moved=true; }
       if(!moved){ p.dir=Math.random()*6.28; p.timer=0.5; }
       p.group.position.set(p.x,(p.level-1)*FH+FOOT_LIFT,p.z);
       p.group.rotation.y=Math.atan2(vx,vz);
