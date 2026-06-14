@@ -88,7 +88,7 @@ const CONFIG = {
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
   GROUND_CEIL_EXTRA: 3, // 地上フロアだけ天井をこの分だけ高くする
-  B1_PED_MULT: 3,       // 地下1階の歩行者は基準の何倍にするか（=225人）
+  B1_PED_MULT: 9,       // 地下1階の歩行者は基準の何倍にするか（=675人）
   B2_PED_MULT: 10,      // 地下2階の歩行者は基準の何倍にするか（=750人）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
@@ -202,7 +202,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.45";
+  const APP_VERSION = "Ver.46";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
