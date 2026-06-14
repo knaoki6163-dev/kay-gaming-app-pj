@@ -70,6 +70,7 @@ const CONFIG = {
 
   STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
   STAIR_LEN: 3,         // 階段の長さ（マス数）
+  START_CLEAR: 8,       // スタート地点からこのマス数以内には階段を置かない
 
   MOUSE_SENS: 0.0022,   // マウス感度
   INVERT_LOOK_X: true,  // 視点の左右反転
@@ -267,7 +268,7 @@ const CONFIG = {
         if(n>=C.STAIR_COUNT) break;
         if([...c.tiles].some(t=>usedTiles.has(t))) continue;
         // スタート地点(1,1)付近には階段を置かない（開始直後に階段に乗らないように）
-        if([...c.tiles].some(t=>{const p=t.split(",");return Math.abs(p[0]-1)+Math.abs(p[1]-1)<4;})) continue;
+        if([...c.tiles].some(t=>{const p=t.split(",");return Math.abs(p[0]-1)+Math.abs(p[1]-1)<C.START_CLEAR;})) continue;
         if(placed.some(p=>Math.abs(p.cxTile-c.cxTile)+Math.abs(p.cyTile-c.cyTile)<3)) continue;
         c.tiles.forEach(t=>{ usedTiles.add(t); stairTileSet.add(t); stairTileLevel[t]=lvl; });
         slabOmit[lvl+1] && c.tiles.forEach(t=>slabOmit[lvl+1].add(t));
