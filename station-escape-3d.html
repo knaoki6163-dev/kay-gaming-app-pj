@@ -59,13 +59,13 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 6,              // 迷路の固定シード（全フロア連結・スタート通路クリアを検証済み）
+  SEED: 47,             // 迷路の固定シード（全フロア連結・上がった先は通路・到達可能を検証済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
   COLS: 27, ROWS: 21,   // 迷路の広さ（マス数。奇数推奨。各フロア独立・面積約2倍）
   TILE: 5,              // 1マスのワールドサイズ
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
-  CHASER_FLOORS: [1, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上
+  CHASER_FLOORS: [1, 2, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上
   MOVE_SPEED: 6.0,      // プレイヤーの移動速度（/秒）
   CHASER_SPEED: 3.2,    // 敵が追跡してくる速度
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
@@ -86,7 +86,7 @@ const CONFIG = {
   EYE_HEIGHT: 1.6,      // 視点の高さ
 
   LOOP_PROB: 0.10,      // 回り道を作る確率
-  PLAZA_COUNT: 3,       // 広場の数（各フロア）
+  PLAZA_COUNTS: {1:5, 2:4, 3:5}, // 各フロアの広場の数（地下2階/地下1階/地上）
   PLAZA_SIZE: 3,        // 広場の一辺
 
   EXIT_COUNT: 5,        // 出口の数（すべて最上階。1つが正解）
@@ -167,7 +167,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "ver. 2026.06.14 (#12)";
+  const APP_VERSION = "ver. 2026.06.14 (#13)";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -211,7 +211,7 @@ const CONFIG = {
       for(let y=0;y<o.div;y++)for(let x=0;x<o.div;x++) g.fillRect(x*step+o.line,y*step+o.line,step*0.28,step*0.18); }
     const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t;
   }
-  const wallTex  = makeTileTexture({base:"#7d848c",grout:"#3e434a",line:6,div:4,sheen:true});
+  const wallTex  = makeTileTexture({base:"#c2c7cc",grout:"#7c828a",line:6,div:4,sheen:true});
   const floorTex = makeTileTexture({base:"#565b61",grout:"#33373c",line:7,div:2,sheen:false});
   const ceilTex  = makeTileTexture({base:"#3c4148",grout:"#2a2e33",line:5,div:3,sheen:false});
   wallTex.repeat.set(2,2);
@@ -234,7 +234,7 @@ const CONFIG = {
   function gFloor(f,x,y){ const g=grids[f]; return x>=0&&y>=0&&x<C.COLS&&y<C.ROWS&&g[y][x]===0; }
   function gWall(f,x,y){ return !(x>=0&&y>=0&&x<C.COLS&&y<C.ROWS) || grids[f][y][x]===1; }
 
-  function generateMazeGrid(){
+  function generateMazeGrid(floor){
     const g=[]; for(let y=0;y<C.ROWS;y++) g.push(new Array(C.COLS).fill(1));
     const F=(x,y)=> x>=0&&y>=0&&x<C.COLS&&y<C.ROWS&&g[y][x]===0;
     (function carve(cx,cy){
@@ -250,16 +250,17 @@ const CONFIG = {
         if((h||v)&&RNG()<C.LOOP_PROB) g[y][x]=0;
       }
     }
-    for(let i=0;i<C.PLAZA_COUNT;i++){
+    const pc=C.PLAZA_COUNTS[floor]||3;
+    for(let i=0;i<pc;i++){
       const sz=C.PLAZA_SIZE;
       const rx=1+((RNG()*(C.COLS-1-sz))|0), ry=1+((RNG()*(C.ROWS-1-sz))|0);
       for(let y=ry;y<ry+sz;y++)for(let x=rx;x<rx+sz;x++) g[y][x]=0;
     }
     return g;
   }
-  function generateAllFloors(){ grids={}; for(let f=1;f<=NF;f++) grids[f]=generateMazeGrid(); }
+  function generateAllFloors(){ grids={}; for(let f=1;f<=NF;f++) grids[f]=generateMazeGrid(f); }
 
-  // ---------- 階段（フロア間を貫く。両フロアの迷路に掘り込んで接続） ----------
+  // ---------- 階段（フロア間を貫く。非対称に掘る：上り口側=下階の通路／降り口側=上階の通路、坂の反対は壁） ----------
   let stairs = [];
   const stairTileSet = new Set();
   let slabOmit = {};               // level -> Set("x,y") その階の床を抜く位置（吹き抜け）
@@ -268,44 +269,49 @@ const CONFIG = {
     let x=sx,y=sy;
     for(let k=0;k<C.COLS+C.ROWS;k++){ const nx=x+dx,ny=y+dy; if(!inInner(nx,ny)) break; if(g[ny][nx]===0) break; g[ny][nx]=0; x=nx; y=ny; }
   }
+  function setWall(g,x,y){ if(y>=0&&y<C.ROWS&&x>=0&&x<C.COLS) g[y][x]=1; }
   function makeStair(axis,x0,y0,lvl){
-    const L=C.STAIR_LEN; const run=[],rails=[]; let entry,exit,bd,fd,ta0,ta1,tc0,tc1;
-    if(axis==="x"){ for(let i=0;i<L;i++){run.push([x0+i,y0]);rails.push([x0+i,y0-1]);rails.push([x0+i,y0+1]);} entry=[x0-1,y0]; exit=[x0+L,y0]; bd=[-1,0]; fd=[1,0]; ta0=x0; ta1=x0+L; tc0=y0; tc1=y0+1; }
-    else          { for(let i=0;i<L;i++){run.push([x0,y0+i]);rails.push([x0-1,y0+i]);rails.push([x0+1,y0+i]);} entry=[x0,y0-1]; exit=[x0,y0+L]; bd=[0,-1]; fd=[0,1]; ta0=y0; ta1=y0+L; tc0=x0; tc1=x0+1; }
-    return { axis,lvl,run,rails,entry,exit,bd,fd,
+    const L=C.STAIR_LEN; const run=[],rails=[]; let entry,exit,bd,fd,adir,ta0,ta1,tc0,tc1;
+    if(axis==="x"){ for(let i=0;i<L;i++){run.push([x0+i,y0]);rails.push([x0+i,y0-1]);rails.push([x0+i,y0+1]);} entry=[x0-1,y0]; exit=[x0+L,y0]; bd=[-1,0]; fd=[1,0]; adir=[1,0]; ta0=x0; ta1=x0+L; tc0=y0; tc1=y0+1; }
+    else          { for(let i=0;i<L;i++){run.push([x0,y0+i]);rails.push([x0-1,y0+i]);rails.push([x0+1,y0+i]);} entry=[x0,y0-1]; exit=[x0,y0+L]; bd=[0,-1]; fd=[0,1]; adir=[0,1]; ta0=y0; ta1=y0+L; tc0=x0; tc1=x0+1; }
+    return { axis,lvl,run,rails,entry,exit,bd,fd,adir, beyond:[exit[0]+adir[0],exit[1]+adir[1]],
       a0:ta0*T,a1:ta1*T,c0:tc0*T,c1:tc1*T,
       cx:axis==="x"?(ta0+ta1)/2*T:(tc0+tc1)/2*T, cz:axis==="x"?(tc0+tc1)/2*T:(ta0+ta1)/2*T,
       cxTile:axis==="x"?x0+L/2:x0+0.5, cyTile:axis==="x"?y0+0.5:y0+L/2 };
   }
   function carveStairInto(s){
-    for(const f of [s.lvl, s.lvl+1]){
-      const g=grids[f];
-      s.run.forEach(([x,y])=>g[y][x]=0); g[s.entry[1]][s.entry[0]]=0; g[s.exit[1]][s.exit[0]]=0;
-      s.rails.forEach(([x,y])=>{ if(y>=0&&y<C.ROWS&&x>=0&&x<C.COLS) g[y][x]=1; });
-      carveConn(g, s.entry[0],s.entry[1], s.bd[0],s.bd[1]);
-      carveConn(g, s.exit[0], s.exit[1], s.fd[0],s.fd[1]);
-    }
+    const lo=grids[s.lvl], up=grids[s.lvl+1];
+    // 下階：上り口(entry)側を通路に、坂の反対側(exit)は壁
+    s.run.forEach(([x,y])=>lo[y][x]=0); lo[s.entry[1]][s.entry[0]]=0; setWall(lo,s.exit[0],s.exit[1]);
+    s.rails.forEach(([x,y])=>setWall(lo,x,y)); carveConn(lo, s.entry[0],s.entry[1], s.bd[0],s.bd[1]);
+    // 上階：降り口(exit)側を通路に、坂の反対側(entry)は壁
+    s.run.forEach(([x,y])=>up[y][x]=0); up[s.exit[1]][s.exit[0]]=0; setWall(up,s.entry[0],s.entry[1]);
+    s.rails.forEach(([x,y])=>setWall(up,x,y)); carveConn(up, s.exit[0],s.exit[1], s.fd[0],s.fd[1]);
+    // 上がった先(beyond)は必ず通路
+    if(inInner(s.beyond[0],s.beyond[1])) up[s.beyond[1]][s.beyond[0]]=0;
   }
   function findStairs(){
     stairs=[]; stairTileSet.clear(); slabOmit={}; stairTileLevel={};
     for(let f=2;f<=NF;f++) slabOmit[f]=new Set();
-    const L=C.STAIR_LEN; const used=new Set(); const placed=[];
+    const L=C.STAIR_LEN; const usedW=new Set(); const usedR=new Set(); const placed=[];
     for(let lvl=1; lvl<NF; lvl++){
       let n=0, att=0;
-      while(n<C.STAIR_COUNT && att<800){
+      while(n<C.STAIR_COUNT && att<1200){
         att++;
         const axis = RNG()<0.5?"x":"z";
         let x0,y0;
         if(axis==="x"){ x0=2+((RNG()*(C.COLS-2-L-1))|0); y0=1+((RNG()*(C.ROWS-2))|0); }
         else          { x0=1+((RNG()*(C.COLS-2))|0);     y0=2+((RNG()*(C.ROWS-2-L-1))|0); }
         const s=makeStair(axis,x0,y0,lvl);
-        const keys=[...s.run,s.entry,s.exit].map(t=>t[0]+","+t[1]);
-        if(keys.some(k=>used.has(k))) continue;
+        const wkeys=[...s.run,s.entry,s.exit,s.beyond].map(t=>t[0]+","+t[1]);
+        const rkeys=s.rails.map(t=>t[0]+","+t[1]);
+        if(wkeys.some(k=>usedW.has(k)||usedR.has(k))) continue;   // 通路が他の通路/手すりと衝突
+        if(rkeys.some(k=>usedW.has(k))) continue;                 // 手すりが他の通路を塗りつぶす
         if(lvl===1 && s.run.some(([x,y])=>Math.abs(x-1)+Math.abs(y-1)<C.START_CLEAR)) continue;
         if(placed.some(p=>Math.abs(p.cxTile-s.cxTile)+Math.abs(p.cyTile-s.cyTile)<4)) continue;
         carveStairInto(s);
-        s.run.forEach(([x,y])=>{ const k=x+","+y; used.add(k); stairTileSet.add(k); stairTileLevel[k]=lvl; slabOmit[lvl+1].add(k); });
-        used.add(s.entry.join(",")); used.add(s.exit.join(","));
+        s.run.forEach(([x,y])=>{ const k=x+","+y; stairTileSet.add(k); stairTileLevel[k]=lvl; slabOmit[lvl+1].add(k); });
+        wkeys.forEach(k=>usedW.add(k)); rkeys.forEach(k=>usedR.add(k));
         placed.push({cxTile:s.cxTile,cyTile:s.cyTile});
         stairs.push(s); n++;
       }
@@ -383,7 +389,7 @@ const CONFIG = {
   const floorMat=new THREE.MeshLambertMaterial({map:floorTex,color:0xffffff});
   const slabMat=new THREE.MeshLambertMaterial({map:floorTex,color:0xffffff,side:THREE.DoubleSide});
   const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
-  const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});
+  const rampMat=new THREE.MeshLambertMaterial({color:0xcc3a2e});  // 上りスロープは赤
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
@@ -405,14 +411,15 @@ const CONFIG = {
         if(grids[f][y][x]===0 && !slabOmit[f].has(x+","+y)){
           const w=tileToWorld(x,y);
           const q=new THREE.Mesh(new THREE.PlaneGeometry(T,T),slabMat);
-          q.rotation.x=-Math.PI/2; q.position.set(w.x,(f-1)*FH,w.z); worldRoot.add(q);
+          // 下階の壁の上面と同じ高さでチカチカ(z-fighting)するのを防ぐため僅かに持ち上げる
+          q.rotation.x=-Math.PI/2; q.position.set(w.x,(f-1)*FH+0.04,w.z); worldRoot.add(q);
         }
       }
     }
     // 最上階の天井
     ceilTex.repeat.set(C.COLS,C.ROWS);
     const ceil=new THREE.Mesh(new THREE.PlaneGeometry(W,D),ceilMat);
-    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*NF,D/2); worldRoot.add(ceil);
+    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*NF+0.04,D/2); worldRoot.add(ceil);
 
     // 各階の天井照明
     for(let f=2;f<=NF;f++){
@@ -716,12 +723,28 @@ const CONFIG = {
       mapCtx.fillStyle = g[y][x]===1 ? "#5b626b" : (up?"#e8a23a":(down?"#5a9bd6":"#eef1f4"));
       mapCtx.fillRect(x*cs,y*cs,cs,cs);
     }
-    // 出口は最上階にいるときだけ表示
+    // 階段の向き矢印（上り=赤で上る方向, 下り=青で下る方向）
+    const arrow=(cx,cy,dx,dy,color)=>{
+      const L=cs*1.3, hx=cx+dx*L*0.5, hy=cy+dy*L*0.5, tx=cx-dx*L*0.5, ty=cy-dy*L*0.5;
+      mapCtx.strokeStyle=color; mapCtx.fillStyle=color; mapCtx.lineWidth=2.5;
+      mapCtx.beginPath(); mapCtx.moveTo(tx,ty); mapCtx.lineTo(hx,hy); mapCtx.stroke();
+      const a=Math.atan2(dy,dx), hl=cs*0.8;
+      mapCtx.beginPath(); mapCtx.moveTo(hx,hy);
+      mapCtx.lineTo(hx-Math.cos(a-0.5)*hl, hy-Math.sin(a-0.5)*hl);
+      mapCtx.lineTo(hx-Math.cos(a+0.5)*hl, hy-Math.sin(a+0.5)*hl);
+      mapCtx.closePath(); mapCtx.fill();
+    };
+    for(const s of stairs){
+      const cx=s.cxTile*cs, cy=s.cyTile*cs;
+      if(s.lvl===F)        arrow(cx,cy, s.adir[0], s.adir[1], "#d12a1e");   // 上り（赤）
+      else if(s.lvl===F-1) arrow(cx,cy,-s.adir[0],-s.adir[1], "#2f6fd0");   // 下り（青）
+    }
+    // 出口は最上階にいるときだけ表示（番号は大きめ）
     if(F===NF){
       for(const e of exits){ const px=(e.x/T)*cs, py=(e.z/T)*cs;
         mapCtx.fillStyle=(e.no===correctExitNo)?"#f5b50a":"#2ecf6b";
-        mapCtx.fillRect(px-cs*0.45,py-cs*0.45,cs*0.9,cs*0.9);
-        mapCtx.fillStyle="#10331c"; mapCtx.font="bold 9px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
+        mapCtx.fillRect(px-cs*0.6,py-cs*0.6,cs*1.2,cs*1.2);
+        mapCtx.fillStyle="#0c2a16"; mapCtx.font="bold "+Math.round(cs*1.7)+"px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
         mapCtx.fillText(String(e.no),px,py);
       }
     }
