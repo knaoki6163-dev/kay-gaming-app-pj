@@ -58,8 +58,11 @@ const CONFIG = {
   WALL_H: 3.6,        // 壁・天井の高さ
 
   MOVE_SPEED: 6.0,    // プレイヤーの移動速度（/秒）
-  CHASER_SPEED: 4.4,  // 追跡者の速度（MOVE_SPEEDより小さいと逃げやすい）
+  CHASER_SPEED: 3.2,  // 追跡者の速度（MOVE_SPEEDより小さいと逃げやすい）
   CATCH_DIST: 1.4,    // この距離まで近づかれると捕まる
+
+  PEDESTRIAN_COUNT: 30, // 構内をうろつく歩行者の人数
+  PED_SPEED: 1.6,       // 歩行者の歩く速さ
 
   MOUSE_SENS: 0.0022, // マウス感度
   INVERT_LOOK_X: true,// 視点の左右反転（true=今までと逆）
@@ -142,8 +145,8 @@ const CONFIG = {
 
   // ---------- Three.js 基本 ----------
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x12151a);
-  if (C.FOG) scene.fog = new THREE.Fog(0x12151a, T*2, T*8.5);
+  scene.background = new THREE.Color(0x222831);
+  if (C.FOG) scene.fog = new THREE.Fog(0x222831, T*3, T*11);
 
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
   camera.rotation.order = "YXZ";
@@ -159,10 +162,10 @@ const CONFIG = {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // 薄暗い駅構内：弱い環境光＋プレイヤーに付く白い照明で手元を照らす
-  scene.add(new THREE.AmbientLight(0x3a4046, 0.5));
-  scene.add(new THREE.HemisphereLight(0x556070, 0x101216, 0.35));
-  const lamp = new THREE.PointLight(0xffffff, 1.4, T*7, 2);
+  // やや明るい駅構内：環境光＋プレイヤーに付く白い照明で手元を照らす
+  scene.add(new THREE.AmbientLight(0x6a727b, 0.9));
+  scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.55));
+  const lamp = new THREE.PointLight(0xffffff, 1.5, T*8, 2);
   camera.add(lamp);
   scene.add(camera);
 
@@ -254,8 +257,26 @@ const CONFIG = {
   let exits = [];
   let correctExitNo = 1;
   let chaser = null;
+  let pedestrians = [];
   const PLAYER_R = T*0.22;
   const CHASER_R = T*0.22;
+  const PED_R = T*0.16;
+
+  // ---------- 人型モデル（歩行者） ----------
+  const legGeo   = new THREE.CylinderGeometry(0.16, 0.16, 0.8, 8);
+  const torsoGeo = new THREE.CylinderGeometry(0.24, 0.20, 0.75, 8);
+  const headGeo  = new THREE.SphereGeometry(0.17, 12, 12);
+  const skinMat  = new THREE.MeshLambertMaterial({ color:0xd8a87c });
+  const legMat   = new THREE.MeshLambertMaterial({ color:0x2c3038 });
+  const clothColors = [0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0x7a4f6b,0xb0892f,0x2f6f73,0x445064,0x9a4b4b,0xcfcfcf];
+  function makeHuman(cloth){
+    const g = new THREE.Group();
+    const legs  = new THREE.Mesh(legGeo, legMat);   legs.position.y  = 0.4;
+    const torso = new THREE.Mesh(torsoGeo, new THREE.MeshLambertMaterial({ color:cloth })); torso.position.y = 1.05;
+    const head  = new THREE.Mesh(headGeo, skinMat); head.position.y  = 1.5;
+    g.add(legs, torso, head);
+    return g;
+  }
 
   const wallMat  = new THREE.MeshLambertMaterial({ map:wallTex,  color:0xffffff });
   const floorMat = new THREE.MeshLambertMaterial({ map:floorTex, color:0xffffff });
@@ -265,6 +286,7 @@ const CONFIG = {
   function buildWorld(){
     while (worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
     exits = [];
+    pedestrians = [];
     const W = C.COLS*T, D = C.ROWS*T;
 
     // 床
@@ -349,6 +371,19 @@ const CONFIG = {
     cGroup.add(body); cGroup.add(head); cGroup.position.set(cw.x,0,cw.z);
     worldRoot.add(cGroup);
     chaser={ group:cGroup, x:cw.x, z:cw.z };
+
+    // 歩行者を配置（構内をうろつく一般人。捕まえてはこない）
+    for (let i=0;i<C.PEDESTRIAN_COUNT;i++){
+      const t = floors[Math.floor(Math.random()*floors.length)];
+      if (Math.abs(t.x-1)+Math.abs(t.y-1) < 2) continue; // 開始地点付近は避ける
+      const w = tileToWorld(t.x,t.y);
+      const px = w.x + (Math.random()-0.5)*T*0.4;
+      const pz = w.z + (Math.random()-0.5)*T*0.4;
+      const g = makeHuman(clothColors[i % clothColors.length]);
+      g.position.set(px, 0, pz);
+      worldRoot.add(g);
+      pedestrians.push({ group:g, x:px, z:pz, dir:Math.random()*Math.PI*2, timer:0 });
+    }
   }
 
   // ---------- プレイヤー / 入力 ----------
@@ -494,10 +529,25 @@ const CONFIG = {
       if(Math.hypot(player.x-e.x, player.z-e.z) < T*0.45 && e.no===correctExitNo){ endGame(true); return; }
     }
   }
+  function updatePedestrians(dt){
+    for(const p of pedestrians){
+      p.timer -= dt;
+      if(p.timer<=0){ p.dir = Math.random()*Math.PI*2; p.timer = 1.5 + Math.random()*3; }
+      const nx = Math.cos(p.dir)*C.PED_SPEED*dt;
+      const nz = Math.sin(p.dir)*C.PED_SPEED*dt;
+      let moved = false;
+      if(canStand(p.x+nx, p.z, PED_R)){ p.x+=nx; moved=true; }
+      if(canStand(p.x, p.z+nz, PED_R)){ p.z+=nz; moved=true; }
+      if(!moved){ p.dir = Math.random()*Math.PI*2; p.timer = 0.5; } // 壁にぶつかったら方向転換
+      p.group.position.set(p.x, 0, p.z);
+      p.group.rotation.y = -p.dir + Math.PI/2;
+    }
+  }
+
   let flick=0;
   function updateDeco(dt){
     for(const e of exits){ if(e.group._panel) e.group._panel.lookAt(player.x, 2.2, player.z); }
-    flick += dt; lamp.intensity = 1.4 + Math.sin(flick*9)*0.08;
+    flick += dt; lamp.intensity = 1.5 + Math.sin(flick*9)*0.08;
   }
 
   // ---------- ミニマップ描画 ----------
@@ -517,6 +567,11 @@ const CONFIG = {
       mapCtx.fillStyle="#10331c"; mapCtx.font="bold 9px sans-serif";
       mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
       mapCtx.fillText(String(e.no), px, py);
+    }
+    // 歩行者（薄いグレーの点）
+    mapCtx.fillStyle="#9aa1aa";
+    for(const p of pedestrians){
+      mapCtx.beginPath(); mapCtx.arc((p.x/T)*cs,(p.z/T)*cs, cs*0.18, 0, Math.PI*2); mapCtx.fill();
     }
     // 追跡者
     if(chaser){
@@ -539,6 +594,7 @@ const CONFIG = {
     if(running){
       updatePlayer(dt);
       updateChaser(dt);
+      updatePedestrians(dt);
       updateDeco(dt);
       checkResult();
       drawMinimap();
