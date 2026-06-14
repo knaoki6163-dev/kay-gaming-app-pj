@@ -167,7 +167,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.20";
+  const APP_VERSION = "Ver.21";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -213,7 +213,7 @@ const CONFIG = {
   }
   const wallTex  = makeTileTexture({base:"#c2c7cc",grout:"#7c828a",line:6,div:4,sheen:true});
   const floorTex = makeTileTexture({base:"#dcc6a0",grout:"#b4986a",line:7,div:2,sheen:false}); // 床=肌色(ベージュ)
-  const ceilTex  = makeTileTexture({base:"#c8ccd1",grout:"#9aa0a8",line:5,div:3,sheen:false}); // 天井=白め
+  const ceilTex  = makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false}); // 天井=壁より少し明るいグレー
   wallTex.repeat.set(2,2);
 
   function exitSignTexture(n){
@@ -385,6 +385,7 @@ const CONFIG = {
   const worldRoot=new THREE.Group(); scene.add(worldRoot);
   let exits=[], correctExitNo=1, chasers=[], pedestrians=[];
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1;
+  const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
 
   const wallMat=new THREE.MeshLambertMaterial({map:wallTex,color:0xffffff});
   wallMat.polygonOffset=true; wallMat.polygonOffsetFactor=1; wallMat.polygonOffsetUnits=1;
@@ -550,22 +551,30 @@ const CONFIG = {
       }
     }
 
-    // 階段（スロープ）を配置（lvl 階の高さから1フロア分上る）
+    // 階段（段々のステップ＋横の手すり。ライトは付けない）
+    const stepMat=new THREE.MeshLambertMaterial({color:0x9aa0a6});
+    const railMat=new THREE.MeshLambertMaterial({color:0x6b7178});
     for(const s of stairs){
       const base=(s.lvl-1)*FH;
-      const run=s.a1-s.a0, rise=FH, len=Math.hypot(run,rise), ang=Math.atan2(rise,run);
-      const widthAcross=s.c1-s.c0;
-      let geo, ramp;
-      if(s.axis==="x"){ geo=new THREE.BoxGeometry(len,0.3,widthAcross); ramp=new THREE.Mesh(geo,rampMat); ramp.rotation.z=ang; }
-      else            { geo=new THREE.BoxGeometry(widthAcross,0.3,len); ramp=new THREE.Mesh(geo,rampMat); ramp.rotation.x=-ang; }
-      ramp.position.set(s.cx, base+rise/2, s.cz); worldRoot.add(ramp);
-      for(let i=1;i<C.STAIR_LEN;i++){
-        const tt=i/C.STAIR_LEN;
-        const bar=new THREE.Mesh(new THREE.BoxGeometry(s.axis==="x"?0.12:widthAcross*0.9,0.05,s.axis==="x"?widthAcross*0.9:0.12),
-          new THREE.MeshLambertMaterial({color:0x5b6066}));
-        const ax=s.a0+tt*run;
-        bar.position.set(s.axis==="x"?ax:s.cx, base+tt*FH+0.18, s.axis==="x"?s.cz:ax);
-        worldRoot.add(bar);
+      const run=s.a1-s.a0, rise=FH, across=s.c1-s.c0, ascX=(s.axis==="x");
+      const N=10, tread=run/N, stepH=rise/N;
+      // 段々（下から積み上がる箱）
+      for(let i=0;i<N;i++){
+        const hgt=(i+1)*stepH, along=s.a0+(i+0.5)*tread;
+        const box = ascX ? new THREE.Mesh(new THREE.BoxGeometry(tread,hgt,across), stepMat)
+                         : new THREE.Mesh(new THREE.BoxGeometry(across,hgt,tread), stepMat);
+        if(ascX) box.position.set(along, base+hgt/2, s.cz);
+        else     box.position.set(s.cx, base+hgt/2, along);
+        worldRoot.add(box);
+      }
+      // 横の手すり（両サイドに斜めのバー）
+      const len=Math.hypot(run,rise), ang=Math.atan2(rise,run), midY=base+rise/2+0.95;
+      for(const so of [0.18, across-0.18]){
+        const rail = ascX ? new THREE.Mesh(new THREE.BoxGeometry(len,0.09,0.09), railMat)
+                          : new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,len), railMat);
+        if(ascX){ rail.rotation.z=ang; rail.position.set(s.cx, midY, s.c0+so); }
+        else    { rail.rotation.x=-ang; rail.position.set(s.c0+so, midY, s.cz); }
+        worldRoot.add(rail);
       }
     }
 
@@ -573,6 +582,7 @@ const CONFIG = {
     const stripMat=new THREE.MeshBasicMaterial({color:0xffffff});
     for(let f=1;f<=NF;f++){
       allFloorTiles(f).forEach((t,i)=>{ if(i%2) return;
+        if(stairTileSet.has(t.x+","+t.y)) return;   // 階段の上にはライトを付けない
         const w=tileToWorld(t.x,t.y);
         const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,f*FH-0.06,w.z); worldRoot.add(a);
       });
@@ -585,7 +595,7 @@ const CONFIG = {
     const usedSpawns=[];
     C.CHASER_FLOORS.forEach(lvl=>{
       const cw=spawnOnFloor(lvl, usedSpawns);
-      const g=makeHuman(0xcc2a2a,0x5a1010); g.position.set(cw.x,(lvl-1)*FH,cw.z); worldRoot.add(g);
+      const g=makeHuman(0xcc2a2a,0x5a1010); g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
       chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z });
     });
 
@@ -601,7 +611,7 @@ const CONFIG = {
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-        const g=makeHuman(clothColors[(pi++)%clothColors.length]); g.position.set(px,(f-1)*FH,pz);
+        const g=makeHuman(clothColors[(pi++)%clothColors.length]); g.position.set(px,(f-1)*FH+FOOT_LIFT,pz);
         worldRoot.add(g);
         pedestrians.push({group:g,x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0});
       }
@@ -790,8 +800,8 @@ const CONFIG = {
 
       const si=stairInfo(chaser.x,chaser.z,chaser.level);
       if(si){ chaser.y=si.y; chaser.level=si.t>=0.5?si.lvl+1:si.lvl; } else { chaser.y=(chaser.level-1)*FH; }
-      chaser.group.position.set(chaser.x,chaser.y,chaser.z);
-      chaser.group.lookAt(player.x, chaser.y+1, player.z);
+      chaser.group.position.set(chaser.x,chaser.y+FOOT_LIFT,chaser.z);
+      chaser.group.lookAt(player.x, chaser.y+1+FOOT_LIFT, player.z);
     }
   }
 
@@ -803,7 +813,7 @@ const CONFIG = {
       if(canStandPed(p.x+nx,p.z,PED_R,p.level)){ p.x+=nx; moved=true; }
       if(canStandPed(p.x,p.z+nz,PED_R,p.level)){ p.z+=nz; moved=true; }
       if(!moved){ p.dir=Math.random()*6.28; p.timer=0.5; }
-      p.group.position.set(p.x,(p.level-1)*FH,p.z); p.group.rotation.y=-p.dir+Math.PI/2;
+      p.group.position.set(p.x,(p.level-1)*FH+FOOT_LIFT,p.z); p.group.rotation.y=-p.dir+Math.PI/2;
     }
   }
 
