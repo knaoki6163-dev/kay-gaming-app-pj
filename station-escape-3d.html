@@ -166,7 +166,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "ver. 2026.06.14 (#16)";
+  const APP_VERSION = "ver. 2026.06.14 (#17)";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -745,23 +745,23 @@ const CONFIG = {
     mapCtx.moveTo(px,py); mapCtx.lineTo(px+fwd.x*cs*1.2,py+fwd.z*cs*1.2); mapCtx.stroke();
     mapCtx.fillStyle="#1f6dd0"; mapCtx.beginPath(); mapCtx.arc(px,py,cs*0.4,0,6.28); mapCtx.fill();
 
-    // 階段の向き矢印（小さめ＝オレンジの階段が隠れない。上り=赤／下り=青、白フチ）
+    // 階段の向き矢印（小さく。頭・白フチ・線幅すべて控えめにして階段が隠れないように）
     const tri=(tx,ty,a,hl,hw)=>{ const bx=tx-Math.cos(a)*hl, by=ty-Math.sin(a)*hl, nx=-Math.sin(a), ny=Math.cos(a);
       mapCtx.beginPath(); mapCtx.moveTo(tx,ty); mapCtx.lineTo(bx+nx*hw,by+ny*hw); mapCtx.lineTo(bx-nx*hw,by-ny*hw); mapCtx.closePath(); };
     const drawArrow=(x1,y1,x2,y2,color)=>{
-      const a=Math.atan2(y2-y1,x2-x1), hl=cs*0.85, hw=cs*0.5;
+      const a=Math.atan2(y2-y1,x2-x1), hl=cs*0.42, hw=cs*0.26;
       const bx=x2-Math.cos(a)*hl, by=y2-Math.sin(a)*hl;
       mapCtx.lineCap="round";
-      mapCtx.strokeStyle="#fff"; mapCtx.lineWidth=4.5;
+      mapCtx.strokeStyle="#fff"; mapCtx.lineWidth=2.4;
       mapCtx.beginPath(); mapCtx.moveTo(x1,y1); mapCtx.lineTo(bx,by); mapCtx.stroke();
-      mapCtx.fillStyle="#fff"; tri(x2,y2,a,hl+1.5,hw+1.5); mapCtx.fill();
-      mapCtx.strokeStyle=color; mapCtx.lineWidth=2.2;
+      mapCtx.fillStyle="#fff"; tri(x2,y2,a,hl+1,hw+1); mapCtx.fill();
+      mapCtx.strokeStyle=color; mapCtx.lineWidth=1.4;
       mapCtx.beginPath(); mapCtx.moveTo(x1,y1); mapCtx.lineTo(bx,by); mapCtx.stroke();
       mapCtx.fillStyle=color; tri(x2,y2,a,hl,hw); mapCtx.fill();
     };
     for(const s of stairs){
       const up=s.lvl===F, down=s.lvl===F-1; if(!up&&!down) continue;
-      const dir=up?1:-1, half=0.7;   // 階段中央付近に小さく（オレンジが見えるように）
+      const dir=up?1:-1, half=0.45;   // 階段中央に小さく（オレンジが見えるように）
       const adx=s.adir[0]*dir, ady=s.adir[1]*dir;
       const x1=(s.cxTile-adx*half)*cs, y1=(s.cyTile-ady*half)*cs;
       const x2=(s.cxTile+adx*half)*cs, y2=(s.cyTile+ady*half)*cs;
