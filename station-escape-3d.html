@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>駅の出口探索ゲーム 3D（8番出口風）</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
+    font-family:"Segoe UI","Hiragino Kaku Gothic ProN",Meiryo,sans-serif; color:#eee;
+    user-select:none; -webkit-user-select:none; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+
+  /* HUD */
+  #hud { position:fixed; top:0; left:0; right:0; padding:10px 14px; pointer-events:none;
+    text-shadow:0 1px 3px #000; }
+  #goal { font-size:18px; font-weight:bold; }
+  #sub  { font-size:12px; color:#bbb; margin-top:2px; }
+
+  /* 中央のクロスヘア */
+  #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
+    background:#fff; border-radius:50%; opacity:.6; pointer-events:none; }
+
+  /* オーバーレイ（開始 / 結果） */
+  .overlay { position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:rgba(0,0,0,.7); z-index:10; }
+  .hidden { display:none !important; }
+  .overlay h1 { font-size:40px; margin:0 0 8px; }
+  .overlay p { font-size:14px; color:#ccc; margin:4px 0; max-width:520px; line-height:1.6; }
+  .overlay button { margin-top:18px; font-size:16px; padding:10px 26px; cursor:pointer;
+    border:none; border-radius:8px; background:#4a90e2; color:#fff; }
+  .clear { color:#5fd36a; } .over { color:#e25555; }
+
+  /* スマホ用タッチ操作 */
+  #touch { position:fixed; inset:0; z-index:5; display:none; }
+  #pad { position:absolute; left:18px; bottom:18px; display:grid;
+    grid-template-columns:repeat(3,56px); grid-template-rows:repeat(3,56px); gap:6px; }
+  #pad div { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25);
+    border-radius:10px; display:flex; align-items:center; justify-content:center;
+    font-size:22px; color:#fff; }
+  #pad .up{grid-area:1/2} #pad .left{grid-area:2/1} #pad .down{grid-area:2/2} #pad .right{grid-area:2/3}
+</style>
+</head>
+<body>
+
+<!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
+<script>
+const CONFIG = {
+  // 迷路の広さ（マス数。大きいほど広い。奇数推奨）
+  COLS: 13,
+  ROWS: 11,
+  TILE: 5,            // 1マスのワールドサイズ
+  WALL_H: 3.6,        // 壁・天井の高さ
+
+  MOVE_SPEED: 6.0,    // プレイヤーの移動速度（/秒）
+  CHASER_SPEED: 4.4,  // 追跡者の速度（MOVE_SPEEDより小さいと逃げやすい）
+  CATCH_DIST: 1.4,    // この距離まで近づかれると捕まる
+
+  MOUSE_SENS: 0.0022, // マウス感度
+  EYE_HEIGHT: 1.6,    // 視点の高さ
+
+  EXIT_COUNT: 5,      // 出口の数（1つが正解）
+  CORRECT_EXIT: null, // 正解の番号。null ならランダム。固定したいなら数値を入れる
+
+  FOG: true,          // 8番出口風の薄暗い霧
+};
+</script>
+<!-- ========================================================= -->
+
+<div id="app"></div>
+<div id="cross" class="hidden"></div>
+<div id="hud" class="hidden">
+  <div id="goal"></div>
+  <div id="sub">WASD / 矢印キーで移動　マウスで視点　ESCで一時停止</div>
+</div>
+
+<!-- スマホ用 -->
+<div id="touch">
+  <div id="pad">
+    <div class="up">▲</div><div class="left">◀</div><div class="down">▼</div><div class="right">▶</div>
+  </div>
+</div>
+
+<!-- 開始画面 -->
+<div id="start" class="overlay">
+  <h1>駅の出口探索 3D</h1>
+  <p>地下通路を歩いて、指定された番号の<b>正しい出口</b>から脱出せよ。<br>
+     通路には<b>赤い追跡者</b>がいる。捕まったらゲームオーバー。</p>
+  <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
+  <button id="startBtn">クリックして開始</button>
+</div>
+
+<!-- 結果画面 -->
+<div id="result" class="overlay hidden">
+  <h1 id="resultText"></h1>
+  <button id="restartBtn">もう一度</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  if (typeof THREE === "undefined") {
+    document.getElementById("start").innerHTML =
+      "<h1>読み込み失敗</h1><p>Three.js を読み込めませんでした。ネット接続を確認して再読み込みしてください。</p>";
+    return;
+  }
+
+  const C = CONFIG;
+
+  // ---------- DOM ----------
+  const app = document.getElementById("app");
+  const hud = document.getElementById("hud");
+  const cross = document.getElementById("cross");
+  const goalEl = document.getElementById("goal");
+  const startScreen = document.getElementById("start");
+  const startBtn = document.getElementById("startBtn");
+  const resultScreen = document.getElementById("result");
+  const resultText = document.getElementById("resultText");
+  const restartBtn = document.getElementById("restartBtn");
+  const touch = document.getElementById("touch");
+
+  // ---------- Three.js 基本 ----------
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0c10);
+  if (C.FOG) scene.fog = new THREE.Fog(0x0a0c10, C.TILE * 1.5, C.TILE * 6.5);
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
+  camera.rotation.order = "YXZ";
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  app.appendChild(renderer.domElement);
+
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ライト：環境光 ＋ プレイヤーに付いてくる照明（探索感）
+  scene.add(new THREE.AmbientLight(0x556070, 0.9));
+  scene.add(new THREE.HemisphereLight(0x8090a0, 0x202020, 0.5));
+  const lamp = new THREE.PointLight(0xfff2d0, 0.9, C.TILE * 5, 2);
+  camera.add(lamp);
+  scene.add(camera);
+
+  // ---------- 迷路生成（穴掘り法） ----------
+  let grid = [];
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+  function generateMaze() {
+    grid = [];
+    for (let y=0;y<C.ROWS;y++) grid.push(new Array(C.COLS).fill(1));
+    (function carve(cx,cy){
+      grid[cy][cx]=0;
+      for (const [dx,dy] of shuffle([[0,-2],[0,2],[-2,0],[2,0]])) {
+        const nx=cx+dx, ny=cy+dy;
+        if (ny>0 && ny<C.ROWS-1 && nx>0 && nx<C.COLS-1 && grid[ny][nx]===1) {
+          grid[cy+dy/2][cx+dx/2]=0; carve(nx,ny);
+        }
+      }
+    })(1,1);
+  }
+  function isFloorTile(tx,ty){ return tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS&&grid[ty][tx]===0; }
+
+  // ワールド⇔タイル変換（x=列, z=行）
+  const T = C.TILE;
+  function tileToWorld(tx,ty){ return { x:(tx+0.5)*T, z:(ty+0.5)*T }; }
+  function worldIsFloor(x,z){ return isFloorTile(Math.floor(x/T), Math.floor(z/T)); }
+  // 半径 r の円が壁に当たらないか（4隅判定）
+  function canStand(x,z,r){
+    return worldIsFloor(x-r,z-r)&&worldIsFloor(x+r,z-r)&&worldIsFloor(x-r,z+r)&&worldIsFloor(x+r,z+r);
+  }
+
+  function allFloorTiles(){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grid[y][x]===0)a.push({x,y}); return a; }
+
+  // ---------- 数字テクスチャ（出口の番号） ----------
+  function numberTexture(n){
+    const s=256, cv=document.createElement("canvas"); cv.width=cv.height=s;
+    const g=cv.getContext("2d");
+    g.fillStyle="#0e3d1f"; g.fillRect(0,0,s,s);
+    g.strokeStyle="#3ba85a"; g.lineWidth=14; g.strokeRect(7,7,s-14,s-14);
+    g.fillStyle="#bfffd0"; g.font="bold 120px sans-serif";
+    g.textAlign="center"; g.textBaseline="middle";
+    g.fillText("出口", s/2, s*0.32);
+    g.font="bold 150px sans-serif";
+    g.fillText(String(n), s/2, s*0.68);
+    const tex=new THREE.CanvasTexture(cv); tex.anisotropy=4; return tex;
+  }
+
+  // ---------- ワールド構築 ----------
+  const worldRoot = new THREE.Group();
+  scene.add(worldRoot);
+  let exits = [];           // {no, x, z, mesh}
+  let correctExitNo = 1;
+  let chaser = null;        // {mesh, x, z}
+  const PLAYER_R = T*0.22;
+  const CHASER_R = T*0.22;
+
+  const wallMat    = new THREE.MeshLambertMaterial({ color:0x9aa3ad });
+  const floorMat   = new THREE.MeshLambertMaterial({ color:0x3a3f46 });
+  const ceilMat    = new THREE.MeshLambertMaterial({ color:0x20242a });
+  const stripMat   = new THREE.MeshBasicMaterial({ color:0xfdfbe6 }); // 蛍光灯っぽい発光
+  const wallGeo    = new THREE.BoxGeometry(T, C.WALL_H, T);
+
+  function buildWorld(){
+    // 既存をクリア
+    while (worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
+    exits = [];
+
+    const W = C.COLS*T, D = C.ROWS*T;
+
+    // 床
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), floorMat);
+    floor.rotation.x = -Math.PI/2; floor.position.set(W/2, 0, D/2);
+    worldRoot.add(floor);
+    // 天井
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), ceilMat);
+    ceil.rotation.x = Math.PI/2; ceil.position.set(W/2, C.WALL_H, D/2);
+    worldRoot.add(ceil);
+
+    // 壁
+    for (let y=0;y<C.ROWS;y++){
+      for (let x=0;x<C.COLS;x++){
+        if (grid[y][x]===1){
+          const w = tileToWorld(x,y);
+          const m = new THREE.Mesh(wallGeo, wallMat);
+          m.position.set(w.x, C.WALL_H/2, w.z);
+          worldRoot.add(m);
+        }
+      }
+    }
+
+    // 蛍光灯（通路マスにまばらに配置して8番出口っぽさ）
+    const strips = allFloorTiles().filter((_,i)=> i%3===0);
+    for (const t of strips){
+      const w = tileToWorld(t.x,t.y);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(T*0.5, 0.08, T*0.12), stripMat);
+      strip.position.set(w.x, C.WALL_H-0.06, w.z);
+      worldRoot.add(strip);
+    }
+
+    // 出口を配置（プレイヤー[1,1]から遠い順に、間隔をあけて）
+    const start = tileToWorld(1,1);
+    const sorted = allFloorTiles().sort((a,b)=>{
+      const wa=tileToWorld(a.x,a.y), wb=tileToWorld(b.x,b.y);
+      return Math.hypot(wb.x-start.x,wb.z-start.z) - Math.hypot(wa.x-start.x,wa.z-start.z);
+    });
+    const used = new Set(["1,1"]);
+    const count = Math.min(C.EXIT_COUNT, Math.floor(sorted.length/2));
+    for (const t of sorted){
+      if (exits.length>=count) break;
+      if (Math.abs(t.x-1)+Math.abs(t.y-1) < 3) continue;
+      if (exits.some(e=>Math.abs(e.tx-t.x)+Math.abs(e.ty-t.y)<3)) continue;
+      const w = tileToWorld(t.x,t.y);
+      const no = exits.length+1;
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(T*0.7, T*0.7),
+        new THREE.MeshBasicMaterial({ map:numberTexture(no), side:THREE.DoubleSide })
+      );
+      panel.position.set(w.x, 1.4, w.z);
+      // 床にうっすら光る目印
+      const glow = new THREE.Mesh(
+        new THREE.CircleGeometry(T*0.45, 24),
+        new THREE.MeshBasicMaterial({ color:0x3ba85a, transparent:true, opacity:0.35 })
+      );
+      glow.rotation.x = -Math.PI/2; glow.position.set(w.x, 0.02, w.z);
+      const g = new THREE.Group(); g.add(panel); g.add(glow);
+      g._panel = panel;
+      worldRoot.add(g);
+      exits.push({ no, tx:t.x, ty:t.y, x:w.x, z:w.z, group:g });
+      used.add(t.x+","+t.y);
+    }
+
+    // 正解の出口
+    correctExitNo = (C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
+      ? C.CORRECT_EXIT : exits[Math.floor(Math.random()*exits.length)].no;
+
+    // 追跡者（赤い人型：胴＋頭）
+    let ct=null;
+    for (const t of sorted){ if(!used.has(t.x+","+t.y)){ ct=t; break; } }
+    if(!ct) ct=sorted[0];
+    const cw=tileToWorld(ct.x,ct.y);
+    const cGroup=new THREE.Group();
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(CHASER_R, CHASER_R, 1.5, 12),
+      new THREE.MeshLambertMaterial({ color:0xe23b3b, emissive:0x550000 }));
+    body.position.y=0.9;
+    const head=new THREE.Mesh(new THREE.SphereGeometry(CHASER_R*0.9,12,12),
+      new THREE.MeshLambertMaterial({ color:0xff6a6a, emissive:0x550000 }));
+    head.position.y=1.9;
+    cGroup.add(body); cGroup.add(head);
+    cGroup.position.set(cw.x,0,cw.z);
+    worldRoot.add(cGroup);
+    chaser={ group:cGroup, x:cw.x, z:cw.z };
+  }
+
+  // ---------- プレイヤー / 入力 ----------
+  const player = { x:0, z:0, yaw:0, pitch:0 };
+  const keys = {};
+  let running = false, locked = false;
+
+  window.addEventListener("keydown", e=>{
+    const k=e.key.toLowerCase(); keys[k]=true;
+    if (["arrowup","arrowdown","arrowleft","arrowright"].includes(k)) e.preventDefault();
+  });
+  window.addEventListener("keyup", e=>{ keys[e.key.toLowerCase()]=false; });
+
+  // マウス視点（ポインタロック）
+  const canvasEl = renderer.domElement;
+  function onMouseMove(e){
+    if(!locked) return;
+    player.yaw   -= e.movementX * C.MOUSE_SENS;
+    player.pitch -= e.movementY * C.MOUSE_SENS;
+    const lim = Math.PI/2 - 0.05;
+    player.pitch = Math.max(-lim, Math.min(lim, player.pitch));
+  }
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("pointerlockchange", ()=>{
+    locked = (document.pointerLockElement === canvasEl);
+    if (running && !locked) pauseToStart(); // ロックが外れたら一時停止扱い
+  });
+  function requestLock(){ if(canvasEl.requestPointerLock) canvasEl.requestPointerLock(); }
+
+  // ---------- スマホ操作 ----------
+  const isTouch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+  let lookTouchId=null, lastLook=null;
+  function setupTouch(){
+    if(!isTouch) return;
+    touch.style.display="block";
+    // 視点ドラッグ（pad以外の領域）
+    touch.addEventListener("touchstart", e=>{
+      for(const t of e.changedTouches){
+        if(t.target.closest("#pad")) continue;
+        if(lookTouchId===null){ lookTouchId=t.identifier; lastLook={x:t.clientX,y:t.clientY}; }
+      }
+    }, {passive:true});
+    touch.addEventListener("touchmove", e=>{
+      for(const t of e.changedTouches){
+        if(t.identifier===lookTouchId && lastLook){
+          player.yaw   -= (t.clientX-lastLook.x)*0.005;
+          player.pitch -= (t.clientY-lastLook.y)*0.005;
+          const lim=Math.PI/2-0.05; player.pitch=Math.max(-lim,Math.min(lim,player.pitch));
+          lastLook={x:t.clientX,y:t.clientY};
+        }
+      }
+    }, {passive:true});
+    touch.addEventListener("touchend", e=>{
+      for(const t of e.changedTouches){ if(t.identifier===lookTouchId){ lookTouchId=null; lastLook=null; } }
+    }, {passive:true});
+    // 移動パッド
+    const map={up:"w",down:"s",left:"a",right:"d"};
+    document.querySelectorAll("#pad div").forEach(el=>{
+      const key=map[el.className];
+      const on =e=>{ e.preventDefault(); keys[key]=true; };
+      const off=e=>{ e.preventDefault(); keys[key]=false; };
+      el.addEventListener("touchstart",on,{passive:false});
+      el.addEventListener("touchend",off,{passive:false});
+      el.addEventListener("touchcancel",off,{passive:false});
+    });
+  }
+
+  // ---------- ゲーム進行 ----------
+  function startGame(){
+    generateMaze();
+    buildWorld();
+    const s = tileToWorld(1,1);
+    player.x=s.x; player.z=s.z; player.yaw=0; player.pitch=0;
+    goalEl.textContent = "目標：" + correctExitNo + "番出口へ脱出せよ";
+    hud.classList.remove("hidden");
+    cross.classList.toggle("hidden", isTouch);
+    startScreen.classList.add("hidden");
+    resultScreen.classList.add("hidden");
+    running = true;
+    if(!isTouch) requestLock();
+  }
+  function pauseToStart(){
+    if(!running) return;
+    running=false;
+    startBtn.textContent="クリックして再開";
+    startScreen.querySelector("h1").textContent="一時停止中";
+    startScreen.classList.remove("hidden");
+  }
+  function endGame(cleared){
+    running=false;
+    if(document.exitPointerLock) document.exitPointerLock();
+    resultText.textContent = cleared ? "CLEAR!" : "GAME OVER";
+    resultText.className = cleared ? "clear" : "over";
+    resultScreen.classList.remove("hidden");
+    cross.classList.add("hidden");
+  }
+
+  startBtn.addEventListener("click", ()=>{
+    if (startScreen.querySelector("h1").textContent==="一時停止中"){
+      // 再開
+      startScreen.classList.add("hidden"); running=true; if(!isTouch) requestLock();
+    } else startGame();
+  });
+  restartBtn.addEventListener("click", startGame);
+  // PCでキャンバスをクリックしたらロック取得
+  canvasEl.addEventListener("click", ()=>{ if(running && !isTouch && !locked) requestLock(); });
+
+  // ---------- 移動・更新 ----------
+  const fwd = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0,1,0);
+  function moveAxis(dx,dz){
+    if (dx!==0 && canStand(player.x+dx, player.z, PLAYER_R)) player.x+=dx;
+    if (dz!==0 && canStand(player.x, player.z+dz, PLAYER_R)) player.z+=dz;
+  }
+  function updatePlayer(dt){
+    // 前方向（水平面）
+    camera.rotation.set(player.pitch, player.yaw, 0);
+    camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize();
+    right.crossVectors(fwd, up).normalize();
+    let mf=0, ms=0;
+    if(keys["w"]||keys["arrowup"]) mf+=1;
+    if(keys["s"]||keys["arrowdown"]) mf-=1;
+    if(keys["d"]||keys["arrowright"]) ms+=1;
+    if(keys["a"]||keys["arrowleft"]) ms-=1;
+    let vx = fwd.x*mf + right.x*ms;
+    let vz = fwd.z*mf + right.z*ms;
+    const len=Math.hypot(vx,vz);
+    if(len>0){
+      vx=vx/len*C.MOVE_SPEED*dt; vz=vz/len*C.MOVE_SPEED*dt;
+      moveAxis(vx,vz);
+    }
+    camera.position.set(player.x, C.EYE_HEIGHT, player.z);
+  }
+  function updateChaser(dt){
+    let dx=player.x-chaser.x, dz=player.z-chaser.z;
+    const len=Math.hypot(dx,dz);
+    if(len>0.001){
+      dx=dx/len*C.CHASER_SPEED*dt; dz=dz/len*C.CHASER_SPEED*dt;
+      const bx=chaser.x, bz=chaser.z;
+      if(canStand(chaser.x+dx, chaser.z, CHASER_R)) chaser.x+=dx;
+      if(canStand(chaser.x, chaser.z+dz, CHASER_R)) chaser.z+=dz;
+      // 完全に詰まったら横へ回り込む
+      if(chaser.x===bx && chaser.z===bz){
+        const alt = Math.abs(dx)>Math.abs(dz)
+          ? [[0, C.CHASER_SPEED*dt],[0,-C.CHASER_SPEED*dt]]
+          : [[C.CHASER_SPEED*dt,0],[-C.CHASER_SPEED*dt,0]];
+        for(const [ax,az] of alt){ if(canStand(chaser.x+ax,chaser.z+az,CHASER_R)){ chaser.x+=ax; chaser.z+=az; break; } }
+      }
+      chaser.group.position.set(chaser.x, 0, chaser.z);
+      chaser.group.lookAt(player.x, 1, player.z);
+    }
+  }
+  function checkResult(){
+    // 捕まり判定
+    if(Math.hypot(player.x-chaser.x, player.z-chaser.z) < C.CATCH_DIST){ endGame(false); return; }
+    // 出口判定
+    for(const e of exits){
+      if(Math.hypot(player.x-e.x, player.z-e.z) < T*0.45){
+        if(e.no===correctExitNo) endGame(true);
+      }
+    }
+  }
+
+  // 出口番号パネルを常にこちらへ向ける＆蛍光灯のちらつき（異変フレーバー）
+  let flick=0;
+  function updateDeco(dt){
+    for(const e of exits){ if(e.group._panel) e.group._panel.lookAt(player.x, 1.4, player.z); }
+    flick += dt;
+    lamp.intensity = 0.9 + Math.sin(flick*7)*0.05;
+  }
+
+  // ---------- メインループ ----------
+  const clock = new THREE.Clock();
+  function loop(){
+    const dt = Math.min(clock.getDelta(), 0.05);
+    if(running){
+      updatePlayer(dt);
+      updateChaser(dt);
+      updateDeco(dt);
+      checkResult();
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+
+  setupTouch();
+  loop();
+})();
+</script>
+</body>
+</html>
