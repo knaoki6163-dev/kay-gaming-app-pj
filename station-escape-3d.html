@@ -81,6 +81,7 @@ const CONFIG = {
   CHASER_SPEED: 3.2,    // 敵が追跡してくる速度
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
+  ALERT_SIGHT_MULT: 1.5,// 一度見つけた敵の探知範囲の倍率（探知能力UP）
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
@@ -202,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.46";
+  const APP_VERSION = "Ver.47";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -925,7 +926,7 @@ const CONFIG = {
       const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
       g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
       g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
-      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z, hunt:false, showAlert:false });
+      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z, hunt:false, showAlert:false, alerted:false, wtx:cw.x, wtz:cw.z });
     });
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
@@ -1180,8 +1181,9 @@ const CONFIG = {
     for(const chaser of chasers){
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
-      const see=same && d<C.CHASER_SIGHT && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
-      if(see){ chaser.lx=player.x; chaser.lz=player.z; }
+      const sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT; // 一度見つけた敵は探知範囲UP
+      const see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
+      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; } // 一度でも見たら以後強化
       // 地下2階の敵：一度見つけたら永続追跡(hunt)。地下1階に上がったら通常化
       if(chaser.level===1 && see) chaser.hunt=true;
       if(chaser.level>=2) chaser.hunt=false;
@@ -1209,9 +1211,13 @@ const CONFIG = {
       if(chasing){
         moveToward(chaser,tx,tz,C.CHASER_SPEED,dt,CHASER_R);
       } else {
-        chaser.wt-=dt; if(chaser.wt<=0){ chaser.dir=Math.random()*6.28; chaser.wt=1+Math.random()*2; }
-        moveToward(chaser, chaser.x+Math.cos(chaser.dir)*3, chaser.z+Math.sin(chaser.dir)*3, C.CHASER_WANDER, dt, CHASER_R);
-        if(chaser.x===chaser._px && chaser.z===chaser._pz) chaser.wt=0; // 詰まったら方向転換
+        chaser.wt-=dt;
+        if(chaser.wt<=0){ chaser.dir=Math.random()*6.28; chaser.wt=1+Math.random()*2;
+          if(chaser.alerted){ chaser.wtx=chaser.lx+(Math.random()-0.5)*10; chaser.wtz=chaser.lz+(Math.random()-0.5)*10; } // 一度見た敵は最終位置付近へ寄る
+          else { chaser.wtx=chaser.x+Math.cos(chaser.dir)*4; chaser.wtz=chaser.z+Math.sin(chaser.dir)*4; }
+        }
+        moveToward(chaser, chaser.wtx, chaser.wtz, C.CHASER_WANDER, dt, CHASER_R);
+        if(chaser.x===chaser._px && chaser.z===chaser._pz) chaser.wt=0; // 詰まったら再設定
       }
       chaser._px=chaser.x; chaser._pz=chaser.z;
 
