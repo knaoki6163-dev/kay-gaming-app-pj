@@ -84,7 +84,7 @@ const CONFIG = {
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 15,  // 地上フロアの歩行者は基準の何倍にするか（地上=1125人）
-  B2_PED_MULT: 5,       // 地下2階の歩行者は基準の何倍にするか
+  B2_PED_MULT: 10,      // 地下2階の歩行者は基準の何倍にするか（=750人）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
   PED_RUSH_CHANCE: 0.12,// 方向転換時に急ぎ足になる確率
@@ -187,7 +187,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.39";
+  const APP_VERSION = "Ver.40";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -904,7 +904,7 @@ const CONFIG = {
       const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
       g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
       g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
-      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z });
+      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z, hunt:false, showAlert:false });
     });
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
@@ -1159,16 +1159,32 @@ const CONFIG = {
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
       const see=same && d<C.CHASER_SIGHT && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
-      if(see){ chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY); chaser.lx=player.x; chaser.lz=player.z; } // 地下2階の敵は追尾が長い
-      if(chaser.mem>0) chaser.mem-=dt;
-      const chasing=chaser.mem>0;
-      chaser.state = chasing? (see?"発見・追跡":"捜索") : "徘徊";
+      if(see){ chaser.lx=player.x; chaser.lz=player.z; }
+      // 地下2階の敵：一度見つけたら永続追跡(hunt)。地下1階に上がったら通常化
+      if(chaser.level===1 && see) chaser.hunt=true;
+      if(chaser.level>=2) chaser.hunt=false;
+
+      let chasing=false, tx=chaser.x, tz=chaser.z;
+      if(chaser.hunt){
+        chasing=true;
+        if(player.level<=1){ tx=player.x; tz=player.z; }          // 地下2階に居る間は本人を追う
+        else { const s=nearestStairForMove(chaser.x,chaser.z,1,1); if(s){tx=s.cx;tz=s.cz;} } // 上の階段へ向かい追って上がる
+        chaser.showAlert = see;                                   // 見失い中はサイレント(赤枠なし)
+        chaser.state = see?"発見・追跡":"追跡(無音)";
+      } else {
+        if(see) chaser.mem=C.CHASER_MEMORY;
+        if(chaser.mem>0) chaser.mem-=dt;
+        chasing=chaser.mem>0;
+        chaser.showAlert = chasing;
+        chaser.state = chasing? (see?"発見・追跡":"捜索") : "徘徊";
+        if(chasing){
+          if(same){ tx=chaser.lx; tz=chaser.lz; }
+          else { const dir=player.level>chaser.level?1:-1; const s=nearestStairForMove(chaser.x,chaser.z,chaser.level,dir);
+                 if(s){tx=s.cx;tz=s.cz;} }
+        }
+      }
 
       if(chasing){
-        let tx,tz;
-        if(same){ tx=chaser.lx; tz=chaser.lz; }
-        else { const dir=player.level>chaser.level?1:-1; const s=nearestStairForMove(chaser.x,chaser.z,chaser.level,dir);
-               tx=s?s.cx:chaser.x; tz=s?s.cz:chaser.z; }
         moveToward(chaser,tx,tz,C.CHASER_SPEED,dt,CHASER_R);
       } else {
         chaser.wt-=dt; if(chaser.wt<=0){ chaser.dir=Math.random()*6.28; chaser.wt=1+Math.random()*2; }
@@ -1256,7 +1272,7 @@ const CONFIG = {
     // 現在フロアの歩行者・敵だけ表示
     mapCtx.fillStyle="#9aa1aa";
     for(const p of pedestrians){ if(p.level!==F) continue; mapCtx.beginPath(); mapCtx.arc((p.x/T)*cs,(p.z/T)*cs,cs*0.16,0,6.28); mapCtx.fill(); }
-    for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=chaser.mem>0?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
+    for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=(chaser.mem>0||chaser.hunt)?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
       mapCtx.arc((chaser.x/T)*cs,(chaser.z/T)*cs,cs*0.4,0,6.28); mapCtx.fill(); }
     const px=(player.x/T)*cs, py=(player.z/T)*cs;
     mapCtx.strokeStyle="#1f6dd0"; mapCtx.lineWidth=2; mapCtx.beginPath();
@@ -1295,13 +1311,13 @@ const CONFIG = {
       updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
-      const alert = chasers.some(c=>c.mem>0);
+      const alert = chasers.some(c=>c.showAlert);
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
     }
-    // 敵に見つかって追われている間は画面周囲を赤くチカチカ
-    const chased = running && chasers.some(c=>c.mem>0);
+    // 敵に見つかって追われている間は画面周囲を赤くチカチカ（サイレント追跡は除く）
+    const chased = running && chasers.some(c=>c.showAlert);
     alertEl.style.opacity = chased ? (0.35 + 0.55*Math.abs(Math.sin(flick*11))) : 0;
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
