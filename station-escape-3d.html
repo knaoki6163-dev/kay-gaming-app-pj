@@ -89,7 +89,7 @@ const CONFIG = {
   LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
   PLAZA_COUNTS: {1:8, 2:9, 3:8}, // 各フロアの広場の数（地下2階/地下1階/地上）
 
-  EXIT_COUNT: 5,        // 出口の数（すべて最上階。1つが正解）
+  EXIT_COUNT: 6,        // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
 
   SHOW_MAP: true,       // 左上のテスト用マップ
@@ -167,7 +167,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.21";
+  const APP_VERSION = "Ver.22";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -662,8 +662,9 @@ const CONFIG = {
       buildOutsideStairs(mx,mz,c.ox,c.oy,topBase);
       exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF});
     });
+    // 正解の出口は毎回ランダム（固定シードのRNGではなくMath.randomを使う）
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
-      ? C.CORRECT_EXIT : (exits.length?exits[(RNG()*exits.length)|0].no:1);
+      ? C.CORRECT_EXIT : (exits.length?exits[(Math.random()*exits.length)|0].no:1);
   }
 
   function buildOutsideStairs(mx,mz,ox,oy,base){
