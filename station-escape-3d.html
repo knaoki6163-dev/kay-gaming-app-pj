@@ -59,7 +59,7 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 20240614,       // 迷路の固定シード（同じ値なら毎回同じマップ）
+  SEED: 7,              // 迷路の固定シード（スタート通路に階段が来ない値を選定済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
   COLS: 19, ROWS: 15,   // 迷路の広さ（マス数。奇数推奨）
   TILE: 5,              // 1マスのワールドサイズ
@@ -167,7 +167,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "ver 2026.06.14 (#9)";
+  const APP_VERSION = "ver 2026.06.14 (#10)";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
