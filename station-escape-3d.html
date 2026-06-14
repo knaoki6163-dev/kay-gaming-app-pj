@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>駅の出口探索ゲーム 3D（8番出口風）</title>
+<title>駅の出口探索ゲーム 3D（新宿駅風）</title>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
     font-family:"Segoe UI","Hiragino Kaku Gothic ProN",Meiryo,sans-serif; color:#eee;
@@ -11,17 +11,21 @@
   #app { position:fixed; inset:0; }
   canvas { display:block; }
 
-  /* HUD */
+  /* HUD（上部中央） */
   #hud { position:fixed; top:0; left:0; right:0; padding:10px 14px; pointer-events:none;
-    text-shadow:0 1px 3px #000; }
+    text-align:center; text-shadow:0 1px 3px #000; }
   #goal { font-size:18px; font-weight:bold; }
-  #sub  { font-size:12px; color:#bbb; margin-top:2px; }
+  #sub  { font-size:12px; color:#cdd3da; margin-top:2px; }
 
-  /* 中央のクロスヘア */
+  /* テスト用ミニマップ（左上） */
+  #map { position:fixed; top:10px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
+    background:#fff; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+
+  /* 中央クロスヘア */
   #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
-    background:#fff; border-radius:50%; opacity:.6; pointer-events:none; }
+    background:#222; border-radius:50%; opacity:.5; pointer-events:none; }
 
-  /* オーバーレイ（開始 / 結果） */
+  /* オーバーレイ */
   .overlay { position:fixed; inset:0; display:flex; flex-direction:column;
     align-items:center; justify-content:center; text-align:center;
     background:rgba(0,0,0,.7); z-index:10; }
@@ -36,7 +40,7 @@
   #touch { position:fixed; inset:0; z-index:5; display:none; }
   #pad { position:absolute; left:18px; bottom:18px; display:grid;
     grid-template-columns:repeat(3,56px); grid-template-rows:repeat(3,56px); gap:6px; }
-  #pad div { background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25);
+  #pad div { background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.4);
     border-radius:10px; display:flex; align-items:center; justify-content:center;
     font-size:22px; color:#fff; }
   #pad .up{grid-area:1/2} #pad .left{grid-area:2/1} #pad .down{grid-area:2/2} #pad .right{grid-area:2/3}
@@ -48,8 +52,8 @@
 <script>
 const CONFIG = {
   // 迷路の広さ（マス数。大きいほど広い。奇数推奨）
-  COLS: 13,
-  ROWS: 11,
+  COLS: 15,
+  ROWS: 13,
   TILE: 5,            // 1マスのワールドサイズ
   WALL_H: 3.6,        // 壁・天井の高さ
 
@@ -58,17 +62,26 @@ const CONFIG = {
   CATCH_DIST: 1.4,    // この距離まで近づかれると捕まる
 
   MOUSE_SENS: 0.0022, // マウス感度
+  INVERT_LOOK_X: true,// 視点の左右反転（true=今までと逆）
+  INVERT_LOOK_Y: true,// 視点の上下反転（true=今までと逆）
   EYE_HEIGHT: 1.6,    // 視点の高さ
 
-  EXIT_COUNT: 5,      // 出口の数（1つが正解）
-  CORRECT_EXIT: null, // 正解の番号。null ならランダム。固定したいなら数値を入れる
+  // 通路を一方通行にせず、ループと広場を作る
+  LOOP_PROB: 0.14,    // 余分な壁を壊して回り道を作る確率（0で純粋迷路）
+  PLAZA_COUNT: 3,     // 開けた広場の数
+  PLAZA_SIZE: 3,      // 広場の一辺のマス数
 
-  FOG: true,          // 8番出口風の薄暗い霧
+  EXIT_COUNT: 5,      // 出口の数（1つが正解）
+  CORRECT_EXIT: null, // 正解の番号。null ならランダム
+
+  SHOW_MAP: true,     // 左上のテスト用マップ表示
+  FOG: true,          // 奥行きの霧（明るめ）
 };
 </script>
 <!-- ========================================================= -->
 
 <div id="app"></div>
+<canvas id="map" class="hidden"></canvas>
 <div id="cross" class="hidden"></div>
 <div id="hud" class="hidden">
   <div id="goal"></div>
@@ -85,8 +98,8 @@ const CONFIG = {
 <!-- 開始画面 -->
 <div id="start" class="overlay">
   <h1>駅の出口探索 3D</h1>
-  <p>地下通路を歩いて、指定された番号の<b>正しい出口</b>から脱出せよ。<br>
-     通路には<b>赤い追跡者</b>がいる。捕まったらゲームオーバー。</p>
+  <p>白いタイル張りの駅構内を歩いて、指定された番号の<b>正しい出口</b>から脱出せよ。<br>
+     構内には<b>赤い追跡者</b>がいる。捕まったらゲームオーバー。</p>
   <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
   <button id="startBtn">クリックして開始</button>
 </div>
@@ -108,6 +121,9 @@ const CONFIG = {
   }
 
   const C = CONFIG;
+  const T = C.TILE;
+  const lookX = C.INVERT_LOOK_X ? 1 : -1;
+  const lookY = C.INVERT_LOOK_Y ? 1 : -1;
 
   // ---------- DOM ----------
   const app = document.getElementById("app");
@@ -120,11 +136,14 @@ const CONFIG = {
   const resultText = document.getElementById("resultText");
   const restartBtn = document.getElementById("restartBtn");
   const touch = document.getElementById("touch");
+  const mapCv = document.getElementById("map");
+  const mapCtx = mapCv.getContext("2d");
+  const MAP_CELL = 11;
 
   // ---------- Three.js 基本 ----------
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0c10);
-  if (C.FOG) scene.fog = new THREE.Fog(0x0a0c10, C.TILE * 1.5, C.TILE * 6.5);
+  scene.background = new THREE.Color(0xe7ebf0);
+  if (C.FOG) scene.fog = new THREE.Fog(0xe7ebf0, T*3.5, T*11);
 
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
   camera.rotation.order = "YXZ";
@@ -140,16 +159,54 @@ const CONFIG = {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // ライト：環境光 ＋ プレイヤーに付いてくる照明（探索感）
-  scene.add(new THREE.AmbientLight(0x556070, 0.9));
-  scene.add(new THREE.HemisphereLight(0x8090a0, 0x202020, 0.5));
-  const lamp = new THREE.PointLight(0xfff2d0, 0.9, C.TILE * 5, 2);
+  // 明るい駅構内らしいライティング
+  scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa0a8, 0.6));
+  const lamp = new THREE.PointLight(0xfffaf0, 0.45, T*6, 2);
   camera.add(lamp);
   scene.add(camera);
 
-  // ---------- 迷路生成（穴掘り法） ----------
+  // ---------- 手続き的テクスチャ（白タイル） ----------
+  function makeTileTexture(opts){
+    const s=256, cv=document.createElement("canvas"); cv.width=cv.height=s;
+    const g=cv.getContext("2d");
+    g.fillStyle=opts.base; g.fillRect(0,0,s,s);
+    const n=opts.div, step=s/n;
+    g.strokeStyle=opts.grout; g.lineWidth=opts.line;
+    for(let i=0;i<=n;i++){
+      g.beginPath(); g.moveTo(i*step,0); g.lineTo(i*step,s); g.stroke();
+      g.beginPath(); g.moveTo(0,i*step); g.lineTo(s,i*step); g.stroke();
+    }
+    if(opts.sheen){ // 各タイルに軽いハイライトで陶器っぽさ
+      g.fillStyle="rgba(255,255,255,0.5)";
+      for(let y=0;y<n;y++)for(let x=0;x<n;x++) g.fillRect(x*step+opts.line, y*step+opts.line, step*0.28, step*0.18);
+    }
+    const tex=new THREE.CanvasTexture(cv);
+    tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.anisotropy=4;
+    return tex;
+  }
+  const wallTex  = makeTileTexture({ base:"#f6f7f9", grout:"#cfd4da", line:6, div:4, sheen:true });
+  const floorTex = makeTileTexture({ base:"#dfe2e6", grout:"#b7bcc3", line:7, div:2, sheen:false });
+  const ceilTex  = makeTileTexture({ base:"#fbfcfd", grout:"#e3e6ea", line:5, div:3, sheen:false });
+  wallTex.repeat.set(2,2);
+
+  // ---------- 数字テクスチャ（出口の番号：黄色い駅サイン風） ----------
+  function exitSignTexture(n){
+    const w=256,h=256,cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    const g=cv.getContext("2d");
+    g.fillStyle="#1a6b32"; g.fillRect(0,0,w,h);                 // 緑地（非常口/出口サイン色）
+    g.strokeStyle="#ffffff"; g.lineWidth=10; g.strokeRect(8,8,w-16,h-16);
+    g.fillStyle="#ffffff"; g.textAlign="center"; g.textBaseline="middle";
+    g.font="bold 70px sans-serif"; g.fillText("出口", w/2, h*0.30);
+    g.font="bold 130px sans-serif"; g.fillText(String(n), w/2, h*0.66);
+    const tex=new THREE.CanvasTexture(cv); tex.anisotropy=4; return tex;
+  }
+
+  // ---------- 迷路生成（穴掘り法＋ループ＋広場） ----------
   let grid = [];
   function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+  function isFloorTile(tx,ty){ return tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS&&grid[ty][tx]===0; }
+
   function generateMaze() {
     grid = [];
     for (let y=0;y<C.ROWS;y++) grid.push(new Array(C.COLS).fill(1));
@@ -162,61 +219,61 @@ const CONFIG = {
         }
       }
     })(1,1);
+
+    // ループを作る（行き止まりを減らし一方通行をなくす）
+    for(let y=1;y<C.ROWS-1;y++){
+      for(let x=1;x<C.COLS-1;x++){
+        if(grid[y][x]===1){
+          const horiz=isFloorTile(x-1,y)&&isFloorTile(x+1,y);
+          const vert =isFloorTile(x,y-1)&&isFloorTile(x,y+1);
+          if((horiz||vert) && Math.random()<C.LOOP_PROB) grid[y][x]=0;
+        }
+      }
+    }
+
+    // 広場（開けた空間）をいくつか作る。外周の壁は残す
+    const sz=C.PLAZA_SIZE;
+    for(let i=0;i<C.PLAZA_COUNT;i++){
+      const rx=1+Math.floor(Math.random()*(C.COLS-1-sz));
+      const ry=1+Math.floor(Math.random()*(C.ROWS-1-sz));
+      for(let y=ry;y<ry+sz;y++)for(let x=rx;x<rx+sz;x++) grid[y][x]=0;
+    }
   }
-  function isFloorTile(tx,ty){ return tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS&&grid[ty][tx]===0; }
 
   // ワールド⇔タイル変換（x=列, z=行）
-  const T = C.TILE;
   function tileToWorld(tx,ty){ return { x:(tx+0.5)*T, z:(ty+0.5)*T }; }
   function worldIsFloor(x,z){ return isFloorTile(Math.floor(x/T), Math.floor(z/T)); }
-  // 半径 r の円が壁に当たらないか（4隅判定）
   function canStand(x,z,r){
     return worldIsFloor(x-r,z-r)&&worldIsFloor(x+r,z-r)&&worldIsFloor(x-r,z+r)&&worldIsFloor(x+r,z+r);
   }
-
   function allFloorTiles(){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grid[y][x]===0)a.push({x,y}); return a; }
-
-  // ---------- 数字テクスチャ（出口の番号） ----------
-  function numberTexture(n){
-    const s=256, cv=document.createElement("canvas"); cv.width=cv.height=s;
-    const g=cv.getContext("2d");
-    g.fillStyle="#0e3d1f"; g.fillRect(0,0,s,s);
-    g.strokeStyle="#3ba85a"; g.lineWidth=14; g.strokeRect(7,7,s-14,s-14);
-    g.fillStyle="#bfffd0"; g.font="bold 120px sans-serif";
-    g.textAlign="center"; g.textBaseline="middle";
-    g.fillText("出口", s/2, s*0.32);
-    g.font="bold 150px sans-serif";
-    g.fillText(String(n), s/2, s*0.68);
-    const tex=new THREE.CanvasTexture(cv); tex.anisotropy=4; return tex;
-  }
 
   // ---------- ワールド構築 ----------
   const worldRoot = new THREE.Group();
   scene.add(worldRoot);
-  let exits = [];           // {no, x, z, mesh}
+  let exits = [];
   let correctExitNo = 1;
-  let chaser = null;        // {mesh, x, z}
+  let chaser = null;
   const PLAYER_R = T*0.22;
   const CHASER_R = T*0.22;
 
-  const wallMat    = new THREE.MeshLambertMaterial({ color:0x9aa3ad });
-  const floorMat   = new THREE.MeshLambertMaterial({ color:0x3a3f46 });
-  const ceilMat    = new THREE.MeshLambertMaterial({ color:0x20242a });
-  const stripMat   = new THREE.MeshBasicMaterial({ color:0xfdfbe6 }); // 蛍光灯っぽい発光
-  const wallGeo    = new THREE.BoxGeometry(T, C.WALL_H, T);
+  const wallMat  = new THREE.MeshLambertMaterial({ map:wallTex,  color:0xffffff });
+  const floorMat = new THREE.MeshLambertMaterial({ map:floorTex, color:0xffffff });
+  const ceilMat  = new THREE.MeshLambertMaterial({ map:ceilTex,  color:0xffffff });
+  const wallGeo  = new THREE.BoxGeometry(T, C.WALL_H, T);
 
   function buildWorld(){
-    // 既存をクリア
     while (worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
     exits = [];
-
     const W = C.COLS*T, D = C.ROWS*T;
 
     // 床
+    floorTex.repeat.set(W/2.2, D/2.2);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), floorMat);
     floor.rotation.x = -Math.PI/2; floor.position.set(W/2, 0, D/2);
     worldRoot.add(floor);
     // 天井
+    ceilTex.repeat.set(C.COLS, C.ROWS);
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), ceilMat);
     ceil.rotation.x = Math.PI/2; ceil.position.set(W/2, C.WALL_H, D/2);
     worldRoot.add(ceil);
@@ -233,23 +290,25 @@ const CONFIG = {
       }
     }
 
-    // 蛍光灯（通路マスにまばらに配置して8番出口っぽさ）
-    const strips = allFloorTiles().filter((_,i)=> i%3===0);
-    for (const t of strips){
+    // 天井の蛍光灯（通路マスにまばらに）
+    const stripMat = new THREE.MeshBasicMaterial({ color:0xffffff });
+    const floors = allFloorTiles();
+    floors.forEach((t,i)=>{
+      if(i%2!==0) return;
       const w = tileToWorld(t.x,t.y);
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(T*0.5, 0.08, T*0.12), stripMat);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(T*0.6, 0.08, T*0.16), stripMat);
       strip.position.set(w.x, C.WALL_H-0.06, w.z);
       worldRoot.add(strip);
-    }
+    });
 
-    // 出口を配置（プレイヤー[1,1]から遠い順に、間隔をあけて）
+    // 出口を配置（プレイヤー[1,1]から遠い順、間隔をあけて）
     const start = tileToWorld(1,1);
-    const sorted = allFloorTiles().sort((a,b)=>{
+    const sorted = floors.slice().sort((a,b)=>{
       const wa=tileToWorld(a.x,a.y), wb=tileToWorld(b.x,b.y);
       return Math.hypot(wb.x-start.x,wb.z-start.z) - Math.hypot(wa.x-start.x,wa.z-start.z);
     });
     const used = new Set(["1,1"]);
-    const count = Math.min(C.EXIT_COUNT, Math.floor(sorted.length/2));
+    const count = Math.min(C.EXIT_COUNT, Math.floor(sorted.length/3));
     for (const t of sorted){
       if (exits.length>=count) break;
       if (Math.abs(t.x-1)+Math.abs(t.y-1) < 3) continue;
@@ -257,41 +316,37 @@ const CONFIG = {
       const w = tileToWorld(t.x,t.y);
       const no = exits.length+1;
       const panel = new THREE.Mesh(
-        new THREE.PlaneGeometry(T*0.7, T*0.7),
-        new THREE.MeshBasicMaterial({ map:numberTexture(no), side:THREE.DoubleSide })
+        new THREE.PlaneGeometry(T*0.6, T*0.6),
+        new THREE.MeshBasicMaterial({ map:exitSignTexture(no), side:THREE.DoubleSide })
       );
-      panel.position.set(w.x, 1.4, w.z);
-      // 床にうっすら光る目印
+      panel.position.set(w.x, 2.2, w.z);
       const glow = new THREE.Mesh(
-        new THREE.CircleGeometry(T*0.45, 24),
-        new THREE.MeshBasicMaterial({ color:0x3ba85a, transparent:true, opacity:0.35 })
+        new THREE.CircleGeometry(T*0.42, 24),
+        new THREE.MeshBasicMaterial({ color:0x2ecf6b, transparent:true, opacity:0.30 })
       );
-      glow.rotation.x = -Math.PI/2; glow.position.set(w.x, 0.02, w.z);
-      const g = new THREE.Group(); g.add(panel); g.add(glow);
-      g._panel = panel;
+      glow.rotation.x = -Math.PI/2; glow.position.set(w.x, 0.03, w.z);
+      const g = new THREE.Group(); g.add(panel); g.add(glow); g._panel = panel;
       worldRoot.add(g);
       exits.push({ no, tx:t.x, ty:t.y, x:w.x, z:w.z, group:g });
       used.add(t.x+","+t.y);
     }
 
-    // 正解の出口
     correctExitNo = (C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
       ? C.CORRECT_EXIT : exits[Math.floor(Math.random()*exits.length)].no;
 
-    // 追跡者（赤い人型：胴＋頭）
+    // 追跡者（赤い人型）
     let ct=null;
     for (const t of sorted){ if(!used.has(t.x+","+t.y)){ ct=t; break; } }
     if(!ct) ct=sorted[0];
     const cw=tileToWorld(ct.x,ct.y);
     const cGroup=new THREE.Group();
     const body=new THREE.Mesh(new THREE.CylinderGeometry(CHASER_R, CHASER_R, 1.5, 12),
-      new THREE.MeshLambertMaterial({ color:0xe23b3b, emissive:0x550000 }));
+      new THREE.MeshLambertMaterial({ color:0xe23b3b, emissive:0x440000 }));
     body.position.y=0.9;
     const head=new THREE.Mesh(new THREE.SphereGeometry(CHASER_R*0.9,12,12),
-      new THREE.MeshLambertMaterial({ color:0xff6a6a, emissive:0x550000 }));
+      new THREE.MeshLambertMaterial({ color:0xff6a6a, emissive:0x440000 }));
     head.position.y=1.9;
-    cGroup.add(body); cGroup.add(head);
-    cGroup.position.set(cw.x,0,cw.z);
+    cGroup.add(body); cGroup.add(head); cGroup.position.set(cw.x,0,cw.z);
     worldRoot.add(cGroup);
     chaser={ group:cGroup, x:cw.x, z:cw.z };
   }
@@ -307,19 +362,18 @@ const CONFIG = {
   });
   window.addEventListener("keyup", e=>{ keys[e.key.toLowerCase()]=false; });
 
-  // マウス視点（ポインタロック）
-  const canvasEl = renderer.domElement;
-  function onMouseMove(e){
-    if(!locked) return;
-    player.yaw   -= e.movementX * C.MOUSE_SENS;
-    player.pitch -= e.movementY * C.MOUSE_SENS;
+  function applyLook(mx,my,sens){
+    player.yaw   += mx * sens * lookX;
+    player.pitch += my * sens * lookY;
     const lim = Math.PI/2 - 0.05;
     player.pitch = Math.max(-lim, Math.min(lim, player.pitch));
   }
-  document.addEventListener("mousemove", onMouseMove);
+
+  const canvasEl = renderer.domElement;
+  document.addEventListener("mousemove", e=>{ if(locked) applyLook(e.movementX, e.movementY, C.MOUSE_SENS); });
   document.addEventListener("pointerlockchange", ()=>{
     locked = (document.pointerLockElement === canvasEl);
-    if (running && !locked) pauseToStart(); // ロックが外れたら一時停止扱い
+    if (running && !locked) pauseToStart();
   });
   function requestLock(){ if(canvasEl.requestPointerLock) canvasEl.requestPointerLock(); }
 
@@ -329,7 +383,6 @@ const CONFIG = {
   function setupTouch(){
     if(!isTouch) return;
     touch.style.display="block";
-    // 視点ドラッグ（pad以外の領域）
     touch.addEventListener("touchstart", e=>{
       for(const t of e.changedTouches){
         if(t.target.closest("#pad")) continue;
@@ -339,9 +392,7 @@ const CONFIG = {
     touch.addEventListener("touchmove", e=>{
       for(const t of e.changedTouches){
         if(t.identifier===lookTouchId && lastLook){
-          player.yaw   -= (t.clientX-lastLook.x)*0.005;
-          player.pitch -= (t.clientY-lastLook.y)*0.005;
-          const lim=Math.PI/2-0.05; player.pitch=Math.max(-lim,Math.min(lim,player.pitch));
+          applyLook(t.clientX-lastLook.x, t.clientY-lastLook.y, 0.005);
           lastLook={x:t.clientX,y:t.clientY};
         }
       }
@@ -349,7 +400,6 @@ const CONFIG = {
     touch.addEventListener("touchend", e=>{
       for(const t of e.changedTouches){ if(t.identifier===lookTouchId){ lookTouchId=null; lastLook=null; } }
     }, {passive:true});
-    // 移動パッド
     const map={up:"w",down:"s",left:"a",right:"d"};
     document.querySelectorAll("#pad div").forEach(el=>{
       const key=map[el.className];
@@ -370,6 +420,7 @@ const CONFIG = {
     goalEl.textContent = "目標：" + correctExitNo + "番出口へ脱出せよ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden", isTouch);
+    if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL; mapCv.classList.remove("hidden"); }
     startScreen.classList.add("hidden");
     resultScreen.classList.add("hidden");
     running = true;
@@ -393,12 +444,10 @@ const CONFIG = {
 
   startBtn.addEventListener("click", ()=>{
     if (startScreen.querySelector("h1").textContent==="一時停止中"){
-      // 再開
       startScreen.classList.add("hidden"); running=true; if(!isTouch) requestLock();
     } else startGame();
   });
   restartBtn.addEventListener("click", startGame);
-  // PCでキャンバスをクリックしたらロック取得
   canvasEl.addEventListener("click", ()=>{ if(running && !isTouch && !locked) requestLock(); });
 
   // ---------- 移動・更新 ----------
@@ -408,7 +457,6 @@ const CONFIG = {
     if (dz!==0 && canStand(player.x, player.z+dz, PLAYER_R)) player.z+=dz;
   }
   function updatePlayer(dt){
-    // 前方向（水平面）
     camera.rotation.set(player.pitch, player.yaw, 0);
     camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize();
     right.crossVectors(fwd, up).normalize();
@@ -417,13 +465,9 @@ const CONFIG = {
     if(keys["s"]||keys["arrowdown"]) mf-=1;
     if(keys["d"]||keys["arrowright"]) ms+=1;
     if(keys["a"]||keys["arrowleft"]) ms-=1;
-    let vx = fwd.x*mf + right.x*ms;
-    let vz = fwd.z*mf + right.z*ms;
+    let vx = fwd.x*mf + right.x*ms, vz = fwd.z*mf + right.z*ms;
     const len=Math.hypot(vx,vz);
-    if(len>0){
-      vx=vx/len*C.MOVE_SPEED*dt; vz=vz/len*C.MOVE_SPEED*dt;
-      moveAxis(vx,vz);
-    }
+    if(len>0){ vx=vx/len*C.MOVE_SPEED*dt; vz=vz/len*C.MOVE_SPEED*dt; moveAxis(vx,vz); }
     camera.position.set(player.x, C.EYE_HEIGHT, player.z);
   }
   function updateChaser(dt){
@@ -434,7 +478,6 @@ const CONFIG = {
       const bx=chaser.x, bz=chaser.z;
       if(canStand(chaser.x+dx, chaser.z, CHASER_R)) chaser.x+=dx;
       if(canStand(chaser.x, chaser.z+dz, CHASER_R)) chaser.z+=dz;
-      // 完全に詰まったら横へ回り込む
       if(chaser.x===bx && chaser.z===bz){
         const alt = Math.abs(dx)>Math.abs(dz)
           ? [[0, C.CHASER_SPEED*dt],[0,-C.CHASER_SPEED*dt]]
@@ -446,22 +489,47 @@ const CONFIG = {
     }
   }
   function checkResult(){
-    // 捕まり判定
     if(Math.hypot(player.x-chaser.x, player.z-chaser.z) < C.CATCH_DIST){ endGame(false); return; }
-    // 出口判定
     for(const e of exits){
-      if(Math.hypot(player.x-e.x, player.z-e.z) < T*0.45){
-        if(e.no===correctExitNo) endGame(true);
-      }
+      if(Math.hypot(player.x-e.x, player.z-e.z) < T*0.45 && e.no===correctExitNo){ endGame(true); return; }
     }
   }
-
-  // 出口番号パネルを常にこちらへ向ける＆蛍光灯のちらつき（異変フレーバー）
   let flick=0;
   function updateDeco(dt){
-    for(const e of exits){ if(e.group._panel) e.group._panel.lookAt(player.x, 1.4, player.z); }
-    flick += dt;
-    lamp.intensity = 0.9 + Math.sin(flick*7)*0.05;
+    for(const e of exits){ if(e.group._panel) e.group._panel.lookAt(player.x, 2.2, player.z); }
+    flick += dt; lamp.intensity = 0.45 + Math.sin(flick*9)*0.03;
+  }
+
+  // ---------- ミニマップ描画 ----------
+  function drawMinimap(){
+    if(!C.SHOW_MAP) return;
+    const cs=MAP_CELL;
+    mapCtx.clearRect(0,0,mapCv.width,mapCv.height);
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      mapCtx.fillStyle = grid[y][x]===1 ? "#5b626b" : "#eef1f4";
+      mapCtx.fillRect(x*cs, y*cs, cs, cs);
+    }
+    // 出口
+    for(const e of exits){
+      const px=(e.x/T)*cs, py=(e.z/T)*cs;
+      mapCtx.fillStyle = (e.no===correctExitNo) ? "#f5b50a" : "#2ecf6b";
+      mapCtx.fillRect(px-cs*0.45, py-cs*0.45, cs*0.9, cs*0.9);
+      mapCtx.fillStyle="#10331c"; mapCtx.font="bold 9px sans-serif";
+      mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
+      mapCtx.fillText(String(e.no), px, py);
+    }
+    // 追跡者
+    if(chaser){
+      mapCtx.fillStyle="#e23b3b"; mapCtx.beginPath();
+      mapCtx.arc((chaser.x/T)*cs,(chaser.z/T)*cs, cs*0.4, 0, Math.PI*2); mapCtx.fill();
+    }
+    // プレイヤー＋向き
+    const px=(player.x/T)*cs, py=(player.z/T)*cs;
+    mapCtx.strokeStyle="#1f6dd0"; mapCtx.lineWidth=2;
+    mapCtx.beginPath(); mapCtx.moveTo(px,py);
+    mapCtx.lineTo(px+fwd.x*cs*1.2, py+fwd.z*cs*1.2); mapCtx.stroke();
+    mapCtx.fillStyle="#1f6dd0"; mapCtx.beginPath();
+    mapCtx.arc(px,py, cs*0.4, 0, Math.PI*2); mapCtx.fill();
   }
 
   // ---------- メインループ ----------
@@ -473,6 +541,7 @@ const CONFIG = {
       updateChaser(dt);
       updateDeco(dt);
       checkResult();
+      drawMinimap();
     }
     renderer.render(scene, camera);
     requestAnimationFrame(loop);
