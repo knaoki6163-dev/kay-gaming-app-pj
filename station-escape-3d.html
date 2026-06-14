@@ -166,7 +166,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "ver. 2026.06.14 (#17)";
+  const APP_VERSION = "ver. 2026.06.14 (#18)";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -211,8 +211,8 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t;
   }
   const wallTex  = makeTileTexture({base:"#c2c7cc",grout:"#7c828a",line:6,div:4,sheen:true});
-  const floorTex = makeTileTexture({base:"#565b61",grout:"#33373c",line:7,div:2,sheen:false});
-  const ceilTex  = makeTileTexture({base:"#3c4148",grout:"#2a2e33",line:5,div:3,sheen:false});
+  const floorTex = makeTileTexture({base:"#dcc6a0",grout:"#b4986a",line:7,div:2,sheen:false}); // 床=肌色(ベージュ)
+  const ceilTex  = makeTileTexture({base:"#c8ccd1",grout:"#9aa0a8",line:5,div:3,sheen:false}); // 天井=白め
   wallTex.repeat.set(2,2);
 
   function exitSignTexture(n){
@@ -389,14 +389,66 @@ const CONFIG = {
   wallMat.polygonOffset=true; wallMat.polygonOffsetFactor=1; wallMat.polygonOffsetUnits=1;
   const floorMat=new THREE.MeshLambertMaterial({map:floorTex,color:0xffffff});
   // スラブ(2,3階の床)は専用テクスチャ。floorTex を共有すると repeat が巨大になりチラつくため分離
-  const slabTex=makeTileTexture({base:"#565b61",grout:"#33373c",line:7,div:2,sheen:false}); slabTex.repeat.set(3,3);
+  const slabTex=makeTileTexture({base:"#dcc6a0",grout:"#b4986a",line:7,div:2,sheen:false}); slabTex.repeat.set(3,3);
   const slabMat=new THREE.MeshLambertMaterial({map:slabTex,color:0xffffff,side:THREE.DoubleSide});
   const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
-  const rampMat=new THREE.MeshLambertMaterial({color:0xcc3a2e});  // 上りスロープは赤
+  const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
+  const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
+  // 壁の看板・ポスター（数種をあらかじめ生成して使い回す）
+  function makePosterTexture(p){
+    const w=256,h=320,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle=p[0];g.fillRect(0,0,w,h);
+    g.strokeStyle="rgba(255,255,255,0.5)";g.lineWidth=8;g.strokeRect(10,10,w-20,h-20);
+    g.fillStyle=p[1];g.textAlign="center";g.textBaseline="middle";
+    g.font="bold 70px sans-serif";g.fillText(p[2],w/2,h*0.40);
+    g.font="bold 38px sans-serif";g.fillText(p[3],w/2,h*0.66);
+    const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;
+  }
+  const posterDefs=[["#f4c20d","#222","出口","EXIT →"],["#1f6fb2","#fff","のりば","1・2番線"],
+    ["#c0392b","#fff","SALE","半額セール"],["#2e8b57","#fff","ご案内","INFORMATION"],
+    ["#7d3c98","#fff","ご注意","足元注意"],["#2c3e50","#fff","時刻表","TIMETABLE"],
+    ["#e67e22","#fff","CAFE","OPEN 7-22"],["#16a085","#fff","お手洗い","TOILET →"]];
+  const posterMats=posterDefs.map(p=>new THREE.MeshBasicMaterial({map:makePosterTexture(p)}));
+  const posterGeo=new THREE.PlaneGeometry(1.7,2.1);
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
   const wallSegGeo=new THREE.BoxGeometry(T,FH,T);
+
+  // 通路に駅構内の黄色い誘導線を張り巡らす（隣接する床マスを結ぶ。1メッシュに統合）
+  function buildYellowLines(f){
+    const h=(f-1)*FH+0.06, wHalf=0.22, verts=[];
+    const strip=(ax,az,bx,bz,px,pz)=>{
+      verts.push(ax+px,h,az+pz, bx+px,h,bz+pz, bx-px,h,bz-pz,
+                 ax+px,h,az+pz, bx-px,h,bz-pz, ax-px,h,az-pz);
+    };
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+      const c=tileToWorld(x,y);
+      if(gFloor(f,x+1,y) && !stairTileSet.has((x+1)+","+y)){ const n=tileToWorld(x+1,y); strip(c.x,c.z,n.x,n.z, 0,wHalf); }
+      if(gFloor(f,x,y+1) && !stairTileSet.has(x+","+(y+1))){ const n=tileToWorld(x,y+1); strip(c.x,c.z,n.x,n.z, wHalf,0); }
+    }
+    if(!verts.length) return;
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
+    worldRoot.add(new THREE.Mesh(geo, yellowMat));
+  }
+  // 壁に看板・ポスターをランダム配置
+  function buildPosters(f){
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]]; let n=0;
+    for(let y=1;y<C.ROWS-1 && n<22;y++)for(let x=1;x<C.COLS-1 && n<22;x++){
+      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+      for(const [dx,dy] of dirs){
+        if(n>=22) break;
+        if(!gWall(f,x+dx,y+dy)) continue;
+        if(Math.random()>0.06) continue;
+        const c=tileToWorld(x,y), ph=(f-1)*FH+1.95;
+        const px=c.x+dx*(T/2-0.06), pz=c.z+dy*(T/2-0.06);
+        const m=new THREE.Mesh(posterGeo, posterMats[(Math.random()*posterMats.length)|0]);
+        m.position.set(px,ph,pz); m.lookAt(c.x,ph,c.z); worldRoot.add(m); n++;
+      }
+    }
+  }
 
   function buildWorld(){
     while(worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
@@ -471,13 +523,15 @@ const CONFIG = {
       }
     }
 
-    // 各階の天井の蛍光灯
+    // 各階の天井の蛍光灯＋黄色い誘導線＋壁の看板/ポスター
     const stripMat=new THREE.MeshBasicMaterial({color:0xffffff});
     for(let f=1;f<=NF;f++){
       allFloorTiles(f).forEach((t,i)=>{ if(i%2) return;
         const w=tileToWorld(t.x,t.y);
         const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,f*FH-0.06,w.z); worldRoot.add(a);
       });
+      buildYellowLines(f);
+      buildPosters(f);
     }
 
     // 追跡者（赤い人型・歩行者と同じ大きさ）を指定階に配置
