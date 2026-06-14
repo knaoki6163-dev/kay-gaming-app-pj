@@ -66,7 +66,7 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 3,              // 迷路の固定シード（独立ホーム5面+各階段／地下1階・地上=迷路、到達性を検証済み）
+  SEED: 32,             // 迷路の固定シード（独立3マス幅ホーム5面+各階段／到達性を検証済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
   COLS: 27, ROWS: 21,   // 迷路の広さ（マス数。奇数推奨。各フロア独立・面積約2倍）
   TILE: 5,              // 1マスのワールドサイズ
@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.33";
+  const APP_VERSION = "Ver.34";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -289,21 +289,20 @@ const CONFIG = {
     return g;
   }
   // 地下2階＝駅のプラットホーム（縦長・2マス幅の島式ホーム5面を独立配置、両側に電車。各ホーム同位置に階段）
-  const LANES=[[3,4],[8,9],[13,14],[18,19],[23,24]];          // 5つのホーム(2マス幅)
-  const TRACKS=[[0,2],[5,7],[10,12],[15,17],[20,22],[25,26]]; // 線路(電車)
+  const LANES=[[2,4],[7,9],[12,14],[17,19],[22,24]];          // 5つのホーム(3マス幅)
+  const TRACKS=[[0,1],[5,6],[10,11],[15,16],[20,21],[25,26]]; // 線路(電車)
   const PLAT_BOT=14, STAIR_Y0=15;                             // ホームは y=1..14、階段はその下端(y15〜)
+  const CENTER_COLS=LANES.map(l=>l[0]+1);                     // 各ホームの中央列
+  const OBJ_ROWS=[2,4,6,8,10,12];                             // 中央に置く物の行（柱は等間隔）
+  function objType(y){ return y===6?"kiosk":(y===10?"sign":(y===2?"trash":"pillar")); }
   function inLane(x){ return LANES.some(l=>x>=l[0]&&x<=l[1]); }
   function isTrainZone(x,y){ return TRACKS.some(l=>x>=l[0]&&x<=l[1]) && y>=1 && y<=PLAT_BOT; }
   function generatePlatformFloor(){
     const g=[]; for(let y=0;y<C.ROWS;y++) g.push(new Array(C.COLS).fill(1));
     // 各ホームは縦長(y=1..PLAT_BOT)。連絡通路なし＝完全に独立
     for(const [x0,x1] of LANES) for(let y=1;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++) g[y][x]=0;
-    // ホーム上の障害物（柱/売店/ゴミ箱）：片側のみ＝必ず通れる迷路状
-    for(const [x0,x1] of LANES) for(let y=3;y<=PLAT_BOT-1;y++){
-      if(y%3!==0) continue;
-      const col=(((y/3)|0)%2===0)?x0:x1;
-      g[y][col]=1;
-    }
+    // 中央列に等間隔の柱＋売店＋看板＋ゴミ箱（両脇は通路として常に空ける）
+    for(const [x0,x1] of LANES){ const xc=x0+1; for(const y of OBJ_ROWS) g[y][xc]=1; }
     return g;
   }
   function generateAllFloors(){
@@ -537,6 +536,7 @@ const CONFIG = {
   // 下階の天井（各フロアの上に貼る白めグレーの天井）
   const underCeilTex=makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false});
   const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide});
+  const blackCeilMat=new THREE.MeshBasicMaterial({color:0x000000,side:THREE.DoubleSide}); // 地下2階の天井は黒（不透過）
   const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
   const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
@@ -561,6 +561,21 @@ const CONFIG = {
   const kioskMat =new THREE.MeshLambertMaterial({color:0xd98a3a});
   const trashMat =new THREE.MeshLambertMaterial({color:0x3f7d4f});
   const signMat  =new THREE.MeshLambertMaterial({color:0x3a6ea5});
+  // 電車の側面テクスチャ（窓・ドアを繰り返し描く）
+  function makeTrainSideTex(stripe){
+    const w=256,hh=128,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#dfe3e7";g.fillRect(0,0,w,hh);                       // 車体
+    g.fillStyle=stripe;g.fillRect(0,16,w,10);                         // ラインカラー帯
+    g.fillStyle="#2b3640";g.fillRect(0,104,w,24);                     // スカート
+    // 窓2枚＋ドア1枚の繰り返し単位
+    g.fillStyle="#9fd6ea"; g.strokeStyle="#566"; g.lineWidth=3;
+    g.fillRect(16,40,70,46); g.strokeRect(16,40,70,46);
+    g.fillRect(170,40,70,46); g.strokeRect(170,40,70,46);
+    g.fillStyle="#8b939b"; g.fillRect(100,34,56,70); g.strokeRect(100,34,56,70); // ドア
+    g.beginPath();g.moveTo(128,34);g.lineTo(128,104);g.stroke();      // ドア中央線
+    const t=new THREE.CanvasTexture(cv); t.wrapS=THREE.RepeatWrapping; t.anisotropy=4; return t;
+  }
+  let boarders=[]; // 開いたドアから乗降する人
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
@@ -579,11 +594,22 @@ const CONFIG = {
     const geo=new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
     geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs,2));
-    worldRoot.add(new THREE.Mesh(geo, underCeilMat));
+    worldRoot.add(new THREE.Mesh(geo, f===1?blackCeilMat:underCeilMat)); // 地下2階の天井は黒
   }
 
+  // 地下2階：黄色い線は各ホームの両脇に一直線
+  function buildPlatformYellow(){
+    const h=0.06, wHalf=0.18, verts=[];
+    const z0=1*T, z1=(PLAT_BOT+1)*T;
+    const line=(cx)=>{ verts.push(cx-wHalf,h,z0, cx+wHalf,h,z0, cx+wHalf,h,z1,  cx-wHalf,h,z0, cx+wHalf,h,z1, cx-wHalf,h,z1); };
+    for(const [x0,x1] of LANES){ line((x0+0.5)*T); line((x1+0.5)*T); }  // 左右の縁
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
+    worldRoot.add(new THREE.Mesh(geo, yellowMat));
+  }
   // 黄色い誘導線：通路には線を引き、広場は埋めず「出入口どうしを縦横の最短L字」でつなぐ
   function buildYellowLines(f){
+    if(f===1){ buildPlatformYellow(); return; }
     const g=grids[f];
     const isFloor=(x,y)=> x>=0&&y>=0&&x<C.COLS&&y<C.ROWS && g[y][x]===0 && !stairTileSet.has(x+","+y);
     // 広場(open)=どこかの2x2が全部床に含まれるマス
@@ -662,36 +688,63 @@ const CONFIG = {
     }
   }
 
-  // 地下2階の描画：境界/手すり=通常壁、線路=電車、ホーム上の壁=柱/売店/ゴミ箱/看板
+  // 地下2階の描画：中央の柱/売店/看板/ゴミ箱、線路の電車（窓・ドア・乗降客）、境界壁
   function buildPlatform(){
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(grids[1][y][x]!==1) continue;
       if(stairTileSet.has(x+","+y)) continue;        // 階段は別描画
       if(isTrainZone(x,y)) continue;                 // 線路は電車でまとめて描画
       const w=tileToWorld(x,y);
-      const border=(x===0||x===C.COLS-1||y===0||y===C.ROWS-1);
-      if(inLane(x) && y>=1 && y<=PLAT_BOT && !border){
-        const k=((x*7+y*13)%4+4)%4;
-        let m;
-        if(k===0){ m=new THREE.Mesh(new THREE.BoxGeometry(0.6,FH,0.6),pillarMat); m.position.set(w.x,FH/2,w.z); }
-        else if(k===1){ m=new THREE.Mesh(new THREE.BoxGeometry(T*0.85,FH*0.6,T*0.85),kioskMat); m.position.set(w.x,FH*0.3,w.z); }
-        else if(k===2){ m=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.0,0.7),trashMat); m.position.set(w.x,0.5,w.z); }
-        else { m=new THREE.Mesh(new THREE.BoxGeometry(T*0.7,1.7,0.14),signMat); m.position.set(w.x,1.5,w.z); }
+      if(CENTER_COLS.includes(x) && OBJ_ROWS.includes(y)){
+        const t=objType(y); let m;
+        if(t==="pillar"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.7,FH,0.7),pillarMat); m.position.set(w.x,FH/2,w.z); }
+        else if(t==="kiosk"){ m=new THREE.Mesh(new THREE.BoxGeometry(T*0.95,FH*0.7,T*0.95),kioskMat); m.position.set(w.x,FH*0.35,w.z); } // 人より大きい遮蔽物
+        else if(t==="trash"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.8,1.0,0.8),trashMat); m.position.set(w.x,0.5,w.z); }
+        else { m=new THREE.Mesh(new THREE.BoxGeometry(T*0.8,1.8,0.16),signMat); m.position.set(w.x,1.6,w.z); }
         worldRoot.add(m);
       } else {
         const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,FH/2,w.z); worldRoot.add(seg);
       }
     }
-    // 電車（各線路レーンにホームの長さぶんの車両）
-    const trainCols=[0xc9ccd1,0x6fae6f,0xe0a23a,0x6f9fd0,0xcf7070,0x9aa0a8];
-    const z0=1*T, z1=(PLAT_BOT+1)*T, zc=(z0+z1)/2, zlen=(z1-z0)*0.97;
+    // 電車（窓・ドア付き／一部ドアは開いて乗降客）
+    boarders=[];
+    const stripes=[0x2b6fb0,0x3f9d4f,0xd5912a,0xb84040,0x6a55a0,0x888f96];
+    const z0=1*T, z1=(PLAT_BOT+1)*T, zc=(z0+z1)/2, zlen=(z1-z0)*0.98;
     TRACKS.forEach((l,i)=>{
-      const xc=(l[0]+l[1]+1)/2*T, xw=(l[1]-l[0]+1)*T*0.62;
-      const train=new THREE.Mesh(new THREE.BoxGeometry(xw,FH*0.72,zlen), new THREE.MeshLambertMaterial({color:trainCols[i%trainCols.length]}));
-      train.position.set(xc, FH*0.36, zc); worldRoot.add(train);
-      const band=new THREE.Mesh(new THREE.BoxGeometry(xw+0.04,FH*0.18,zlen), new THREE.MeshBasicMaterial({color:0x223040}));
-      band.position.set(xc, FH*0.52, zc); worldRoot.add(band);
+      const xc=(l[0]+l[1]+1)/2*T, carW=(l[1]-l[0]+1)*T*0.66, carH=FH*0.8;
+      const tex=makeTrainSideTex("#"+stripes[i%stripes.length].toString(16).padStart(6,"0"));
+      tex.repeat.set(Math.max(3,Math.round(zlen/4)),1);
+      const side=new THREE.MeshLambertMaterial({map:tex});
+      const plain=new THREE.MeshLambertMaterial({color:0xeef1f3});
+      const mats=[side,side,plain,plain,plain,plain]; // +x,-x,+y,-y,+z,-z
+      const car=new THREE.Mesh(new THREE.BoxGeometry(carW,carH,zlen),mats);
+      car.position.set(xc, carH/2+0.05, zc); worldRoot.add(car);
+      const roof=new THREE.Mesh(new THREE.BoxGeometry(carW*0.96,0.25,zlen),new THREE.MeshLambertMaterial({color:0xb9bfc4}));
+      roof.position.set(xc, carH+0.1, zc); worldRoot.add(roof);
+      // 開いたドア＋乗降客（隣にホームがある側）
+      const doorZ=zc;
+      [[-1,l[0]-1],[1,l[1]+1]].forEach(([sgn,adjX])=>{
+        if(!inLane(adjX)) return;                      // 隣にホームがある側だけ
+        const doorX=xc+sgn*carW/2;
+        const dark=new THREE.Mesh(new THREE.BoxGeometry(0.1,carH*0.7,T*0.7),new THREE.MeshBasicMaterial({color:0x0a0e12}));
+        dark.position.set(doorX, carH*0.4, doorZ); worldRoot.add(dark);                   // 開口
+        const platX=(adjX+0.5)*T;
+        for(let k=0;k<2;k++){
+          const g=makeHuman(clothColors[(i*3+k)%clothColors.length]);
+          worldRoot.add(g);
+          boarders.push({ group:g, doorX, platX, z:doorZ+(k-0.5)*1.2, phase:Math.random()*6.28 });
+        }
+      });
     });
+  }
+  // 乗降客：ドアとホームの間を行き来
+  function updateBoarders(t){
+    for(const b of boarders){
+      const s=(Math.sin(t*1.2+b.phase)*0.5+0.5);   // 0..1
+      const x=b.doorX+(b.platX-b.doorX)*s;
+      b.group.position.set(x, FOOT_LIFT, b.z);
+      b.group.rotation.y = (b.platX>b.doorX)? Math.PI/2 : -Math.PI/2;
+    }
   }
 
   function buildWorld(){
@@ -1125,7 +1178,7 @@ const CONFIG = {
   function loop(){
     const dt=Math.min(clock.getDelta(),0.05);
     if(running){
-      updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); checkResult();
+      updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.mem>0);
