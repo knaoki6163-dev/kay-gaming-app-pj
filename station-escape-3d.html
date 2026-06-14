@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.26";
+  const APP_VERSION = "Ver.27";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -212,7 +212,7 @@ const CONFIG = {
 
   scene.add(new THREE.AmbientLight(0x6a727b, 0.9));
   scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.55));
-  const lamp = new THREE.PointLight(0xffffff, 1.5, T*8, 2);
+  const lamp = new THREE.PointLight(0xffffff, 0.7, T*7, 2);  // 一定光（床/天井の発光・脈動を防ぐ）
   camera.add(lamp);
   scene.add(camera);
 
@@ -389,7 +389,8 @@ const CONFIG = {
   const headGeo=new THREE.SphereGeometry(0.17,12,12);
   const skinMat=new THREE.MeshLambertMaterial({color:0xd8a87c});
   const legMat=new THREE.MeshLambertMaterial({color:0x2c3038});
-  const clothColors=[0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0x7a4f6b,0xb0892f,0x2f6f73,0x445064,0x9a4b4b,0xcfcfcf];
+  // 敵(赤)と紛らわしいので赤系は入れない
+  const clothColors=[0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0xb0892f,0x2f6f73,0x445064,0xcfcfcf];
   function makeHuman(cloth, legColor){
     const g=new THREE.Group();
     const legs=new THREE.Mesh(legGeo, legColor?new THREE.MeshLambertMaterial({color:legColor}):legMat); legs.position.y=0.4;
@@ -863,7 +864,7 @@ const CONFIG = {
     }
   }
   let flick=0;
-  function updateDeco(dt){ flick+=dt; lamp.intensity=1.5+Math.sin(flick*9)*0.08; }
+  function updateDeco(dt){ flick+=dt; }  // flick は警告点滅用のタイマー（ライトは一定）
 
   // ---------- ミニマップ（現在フロアを表示。階を上がると切り替わる） ----------
   function drawMinimap(){
