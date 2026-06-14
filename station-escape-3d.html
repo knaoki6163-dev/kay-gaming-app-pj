@@ -36,6 +36,7 @@
   .overlay button { margin-top:18px; font-size:16px; padding:10px 26px; cursor:pointer;
     border:none; border-radius:8px; background:#4a90e2; color:#fff; }
   .clear { color:#5fd36a; } .over { color:#e25555; }
+  #version { margin-top:14px; font-size:12px; color:#7f8893; }
 
   #touch { position:fixed; inset:0; z-index:5; display:none; }
   #pad { position:absolute; left:18px; bottom:18px; display:grid;
@@ -44,6 +45,13 @@
     border-radius:10px; display:flex; align-items:center; justify-content:center;
     font-size:22px; color:#fff; }
   #pad .up{grid-area:1/2} #pad .left{grid-area:2/1} #pad .down{grid-area:2/2} #pad .right{grid-area:2/3}
+
+  /* スマホ：マップを左端に寄せ、タイトル文と重ならないよう本文を右寄せ */
+  body.is-touch #floor { left:2px; font-size:12px; padding:3px 7px; }
+  body.is-touch #map { left:2px; }
+  body.is-touch #mapLabel { left:4px; }
+  body.is-touch #hud { text-align:right; padding-left:130px; padding-right:10px; }
+  body.is-touch #goal { font-size:15px; }
 </style>
 </head>
 <body>
@@ -107,11 +115,12 @@ const CONFIG = {
 </div>
 
 <div id="start" class="overlay">
-  <h1>駅の出口探索 3D（3階建て）</h1>
-  <p>1階からスタート。<b>階段で最上階(3階)まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から地上へ脱出せよ。<br>
+  <h1>駅の出口探索 3D（地下2階〜地上）</h1>
+  <p><b>地下2階</b>からスタート。<b>階段で地上まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から脱出せよ。<br>
      構内には<b>赤い追跡者</b>がいる。普段は徘徊しているが、<b>こちらを見つけると追ってくる</b>。捕まったらゲームオーバー。</p>
   <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
   <button id="startBtn">クリックして開始</button>
+  <div id="version"></div>
 </div>
 
 <div id="result" class="overlay hidden">
@@ -157,7 +166,15 @@ const CONFIG = {
   const mapCtx = mapCv.getContext("2d");
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
-  const MAP_CELL = 10;
+  const versionEl = document.getElementById("version");
+  const APP_VERSION = "ver 2026.06.14 (#9)";
+  versionEl.textContent = APP_VERSION;
+  const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+  if(_touch) document.body.classList.add("is-touch");
+  const MAP_CELL = _touch ? 7 : 10;
+
+  // フロア名：最下層から 地下2階→地下1階→地上（最上階）
+  function floorName(lv){ return lv>=NF ? "地上" : "地下"+(NF-lv)+"階"; }
 
   // ---------- Three.js ----------
   const scene = new THREE.Scene();
@@ -567,7 +584,7 @@ const CONFIG = {
     generateMaze(); findStairs(); buildWorld();
     const s=tileToWorld(1,1);
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
-    goalEl.textContent="目標："+correctExitNo+"番出口（"+NF+"階）から脱出せよ";
+    goalEl.textContent="目標："+correctExitNo+"番出口（地上）から脱出せよ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
@@ -713,7 +730,7 @@ const CONFIG = {
       updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); checkResult();
       drawMinimap();
       const alert = chasers.some(c=>c.mem>0);
-      floorEl.textContent = "現在 "+player.level+"階 / "+NF+"階";
+      floorEl.textContent = "現在地: "+floorName(player.level);
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
     }
     renderer.render(scene,camera);
