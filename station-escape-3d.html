@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>駅の出口探索ゲーム 3D（2階建て）</title>
+<title>駅の出口探索ゲーム 3D（3階建て）</title>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
     font-family:"Segoe UI","Hiragino Kaku Gothic ProN",Meiryo,sans-serif; color:#eee;
@@ -49,9 +49,10 @@
 <script>
 const CONFIG = {
   SEED: 20240614,       // 迷路の固定シード（同じ値なら毎回同じマップ）
-  COLS: 17, ROWS: 13,   // 迷路の広さ（マス数。奇数推奨）
+  NUM_FLOORS: 3,        // フロア数（3階建て）
+  COLS: 19, ROWS: 15,   // 迷路の広さ（マス数。奇数推奨）
   TILE: 5,              // 1マスのワールドサイズ
-  WALL_H: 4.5,          // 1フロアの高さ（＝1階と2階の段差）
+  WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_COUNT: 2,      // 敵の人数
   MOVE_SPEED: 6.0,      // プレイヤーの移動速度（/秒）
@@ -64,7 +65,7 @@ const CONFIG = {
   PEDESTRIAN_COUNT: 30, // 歩行者の人数（当たり判定あり）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
 
-  STAIR_COUNT: 3,       // 1階↔2階をつなぐ階段の数
+  STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
   STAIR_LEN: 3,         // 階段の長さ（マス数）
 
   MOUSE_SENS: 0.0022,   // マウス感度
@@ -76,7 +77,7 @@ const CONFIG = {
   PLAZA_COUNT: 2,       // 広場の数
   PLAZA_SIZE: 3,        // 広場の一辺
 
-  EXIT_COUNT: 5,        // 出口の数（すべて2階。1つが正解）
+  EXIT_COUNT: 5,        // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
 
   SHOW_MAP: true,       // 左上のテスト用マップ
@@ -101,8 +102,8 @@ const CONFIG = {
 </div>
 
 <div id="start" class="overlay">
-  <h1>駅の出口探索 3D（2階建て）</h1>
-  <p>1階からスタート。<b>階段で2階へ上がり</b>、外周にある指定番号の<b>正しい出口</b>から地上へ脱出せよ。<br>
+  <h1>駅の出口探索 3D（3階建て）</h1>
+  <p>1階からスタート。<b>階段で最上階(3階)まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から地上へ脱出せよ。<br>
      構内には<b>赤い追跡者</b>がいる。普段は徘徊しているが、<b>こちらを見つけると追ってくる</b>。捕まったらゲームオーバー。</p>
   <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
   <button id="startBtn">クリックして開始</button>
@@ -126,6 +127,7 @@ const CONFIG = {
   const C = CONFIG;
   const T = C.TILE;
   const FH = C.WALL_H;             // フロア高さ
+  const NF = C.NUM_FLOORS;         // フロア数
   const lookX = C.INVERT_LOOK_X ? 1 : -1;
   const lookY = C.INVERT_LOOK_Y ? 1 : -1;
 
@@ -231,60 +233,72 @@ const CONFIG = {
   }
 
   // ---------- 階段の検出（1マス幅・両脇が壁の直線通路を利用） ----------
-  let stairs = [];                 // {axis,a0,a1,c0,c1,cx,cz,tiles:Set}
-  const stairTileSet = new Set();  // "tx,ty"
+  // 各階段は lvl→lvl+1 をつなぐ。lvl 階の高さ(lvl-1)*FH から lvl 階分だけ上る。
+  let stairs = [];                 // {axis,a0,a1,c0,c1,cx,cz,lvl,tiles:Set}
+  const stairTileSet = new Set();  // "tx,ty"（全階段タイル）
+  let slabOmit = {};               // level -> Set("x,y")  その階の床を抜く位置（吹き抜け）
+  let stairTileLevel = {};         // "x,y" -> lvl（マップ表示用）
   function findStairs(){
-    stairs=[]; stairTileSet.clear();
+    stairs=[]; stairTileSet.clear(); slabOmit={}; stairTileLevel={};
+    for(let f=2;f<=NF;f++) slabOmit[f]=new Set();
     const L=C.STAIR_LEN;
     const cands=[];
-    // 水平
     for(let y=1;y<C.ROWS-1;y++)for(let x=1;x+L<=C.COLS-1;x++){
       let ok=true;
       for(let i=0;i<L;i++){ if(!isFloorTile(x+i,y)||!isWallTile(x+i,y-1)||!isWallTile(x+i,y+1)){ok=false;break;} }
-      if(ok&&isFloorTile(x-1,y)&&isFloorTile(x+L,y)) cands.push({axis:"x",tx:x,ty:y,L});
+      if(ok&&isFloorTile(x-1,y)&&isFloorTile(x+L,y)) cands.push(makeCand("x",x,y,L));
     }
-    // 垂直
     for(let x=1;x<C.COLS-1;x++)for(let y=1;y+L<=C.ROWS-1;y++){
       let ok=true;
       for(let i=0;i<L;i++){ if(!isFloorTile(x,y+i)||!isWallTile(x-1,y+i)||!isWallTile(x+1,y+i)){ok=false;break;} }
-      if(ok&&isFloorTile(x,y-1)&&isFloorTile(x,y+L)) cands.push({axis:"z",tx:x,ty:y,L});
+      if(ok&&isFloorTile(x,y-1)&&isFloorTile(x,y+L)) cands.push(makeCand("z",x,y,L));
     }
     shuffle(cands);
-    const placed=[];
-    for(const c of cands){
-      if(placed.length>=C.STAIR_COUNT) break;
-      const cxTile = c.axis==="x"? c.tx+L/2 : c.tx+0.5;
-      const cyTile = c.axis==="x"? c.ty+0.5 : c.ty+L/2;
-      if(placed.some(p=>Math.abs(p.cxTile-cxTile)+Math.abs(p.cyTile-cyTile)<4)) continue;
-      const tiles=new Set();
-      if(c.axis==="x"){ for(let i=0;i<L;i++) tiles.add((c.tx+i)+","+c.ty); }
-      else            { for(let i=0;i<L;i++) tiles.add(c.tx+","+(c.ty+i)); }
-      const a0 = (c.axis==="x"? c.tx : c.ty)*T;
-      const a1 = (c.axis==="x"? c.tx+L : c.ty+L)*T;
-      const c0 = (c.axis==="x"? c.ty : c.tx)*T;
-      const c1 = c0 + T;
-      const s={ axis:c.axis, a0,a1,c0,c1, cxTile,cyTile,
-        cx:(c.axis==="x"?(a0+a1)/2:(c0+c1)/2), cz:(c.axis==="x"?(c0+c1)/2:(a0+a1)/2), tiles };
-      stairs.push(s); placed.push({cxTile,cyTile});
-      tiles.forEach(t=>stairTileSet.add(t));
+    const usedTiles=new Set(); const placed=[];
+    // フロア間ごと(1→2, 2→3, ...)に STAIR_COUNT 本ずつ割り当てる
+    for(let lvl=1; lvl<NF; lvl++){
+      let n=0;
+      for(const c of cands){
+        if(n>=C.STAIR_COUNT) break;
+        if([...c.tiles].some(t=>usedTiles.has(t))) continue;
+        if(placed.some(p=>Math.abs(p.cxTile-c.cxTile)+Math.abs(p.cyTile-c.cyTile)<3)) continue;
+        c.tiles.forEach(t=>{ usedTiles.add(t); stairTileSet.add(t); stairTileLevel[t]=lvl; });
+        slabOmit[lvl+1] && c.tiles.forEach(t=>slabOmit[lvl+1].add(t));
+        stairs.push(Object.assign({lvl}, c));
+        placed.push({cxTile:c.cxTile,cyTile:c.cyTile});
+        n++;
+      }
     }
   }
+  function makeCand(axis,x,y,L){
+    const tiles=new Set();
+    if(axis==="x"){ for(let i=0;i<L;i++) tiles.add((x+i)+","+y); } else { for(let i=0;i<L;i++) tiles.add(x+","+(y+i)); }
+    const a0=(axis==="x"?x:y)*T, a1=(axis==="x"?x+L:y+L)*T, c0=(axis==="x"?y:x)*T, c1=c0+T;
+    return { axis,a0,a1,c0,c1,tiles,
+      cxTile:axis==="x"?x+L/2:x+0.5, cyTile:axis==="x"?y+0.5:y+L/2,
+      cx:axis==="x"?(a0+a1)/2:(c0+c1)/2, cz:axis==="x"?(c0+c1)/2:(a0+a1)/2 };
+  }
 
-  // 階段上の高さ（0..FH）。階段外なら null
-  function stairInfo(x,z){
+  // 現在 level にいる人がその階段に乗っているか判定し、高さと移行先を返す
+  function stairInfo(x,z,level){
     for(const s of stairs){
-      const along = s.axis==="x"? x : z;
-      const cross = s.axis==="x"? z : x;
+      if(level!==s.lvl && level!==s.lvl+1) continue;   // その階段に関係する階層のみ
+      const along=s.axis==="x"?x:z, cross=s.axis==="x"?z:x;
       if(cross>=s.c0&&cross<=s.c1&&along>=s.a0&&along<=s.a1){
         const t=(along-s.a0)/(s.a1-s.a0);
-        return { t, y:t*FH };
+        return { t, y:(s.lvl-1)*FH + t*FH, lvl:s.lvl };
       }
     }
     return null;
   }
-  function nearestStair(x,z){
+  // level から dir 方向(+1=上,-1=下)へ移動できる最寄りの階段の中心を返す
+  function nearestStairForMove(x,z,level,dir){
     let best=null,bd=1e9;
-    for(const s of stairs){ const d=Math.hypot(s.cx-x,s.cz-z); if(d<bd){bd=d;best=s;} }
+    for(const s of stairs){
+      if(dir>0 && s.lvl!==level) continue;       // 上る：下端がこの階の階段
+      if(dir<0 && s.lvl+1!==level) continue;      // 下る：上端がこの階の階段
+      const d=Math.hypot(s.cx-x,s.cz-z); if(d<bd){bd=d;best=s;}
+    }
     return best;
   }
 
@@ -340,8 +354,7 @@ const CONFIG = {
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
-  const lowerWallGeo=new THREE.BoxGeometry(T,FH,T);
-  const upperWallGeo=new THREE.BoxGeometry(T,FH,T);
+  const wallSegGeo=new THREE.BoxGeometry(T,FH,T);
 
   function buildWorld(){
     while(worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
@@ -353,70 +366,75 @@ const CONFIG = {
     const floor1=new THREE.Mesh(new THREE.PlaneGeometry(W,D),floorMat);
     floor1.rotation.x=-Math.PI/2; floor1.position.set(W/2,0,D/2); worldRoot.add(floor1);
 
-    // 2階の床（タイル単位。階段マスは抜く＝吹き抜け）
-    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      if(grid[y][x]===0 && !stairTileSet.has(x+","+y)){
-        const w=tileToWorld(x,y);
-        const q=new THREE.Mesh(new THREE.PlaneGeometry(T,T),slabMat);
-        q.rotation.x=-Math.PI/2; q.position.set(w.x,FH,w.z); worldRoot.add(q);
+    // 各階の床スラブ（タイル単位。階段マスは抜く＝吹き抜け）
+    for(let f=2;f<=NF;f++){
+      for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+        if(grid[y][x]===0 && !slabOmit[f].has(x+","+y)){
+          const w=tileToWorld(x,y);
+          const q=new THREE.Mesh(new THREE.PlaneGeometry(T,T),slabMat);
+          q.rotation.x=-Math.PI/2; q.position.set(w.x,(f-1)*FH,w.z); worldRoot.add(q);
+        }
       }
     }
-    // 天井（2階の上）
+    // 最上階の天井
     ceilTex.repeat.set(C.COLS,C.ROWS);
     const ceil=new THREE.Mesh(new THREE.PlaneGeometry(W,D),ceilMat);
-    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*2,D/2); worldRoot.add(ceil);
+    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*NF,D/2); worldRoot.add(ceil);
 
-    // 2階を少しだけ明るくする天井照明
-    let li=0;
-    for(let y=2;y<C.ROWS-1;y+=3){ for(let x=2;x<C.COLS-1;x+=3){
-      if(li>=8) break;
-      if(grid[y][x]===0 && !stairTileSet.has(x+","+y)){
-        const w=tileToWorld(x,y);
-        const pl=new THREE.PointLight(0xfff2d8, 0.5, T*6, 2);
-        pl.position.set(w.x, FH*2-0.5, w.z); worldRoot.add(pl); li++;
-      }
-    }}
+    // 上の階を少しだけ明るくする天井照明（各階）
+    for(let f=2;f<=NF;f++){
+      let li=0;
+      for(let y=2;y<C.ROWS-1;y+=3){ for(let x=2;x<C.COLS-1;x+=3){
+        if(li>=6) break;
+        if(grid[y][x]===0 && !stairTileSet.has(x+","+y)){
+          const w=tileToWorld(x,y);
+          const pl=new THREE.PointLight(0xfff2d8, 0.5, T*6, 2);
+          pl.position.set(w.x, f*FH-0.5, w.z); worldRoot.add(pl); li++;
+        }
+      }}
+    }
 
-    // 出口を先に決める（2階・外周）→ 開口する上段の壁を記録
-    const upperSkip=new Set();
-    placeExits(upperSkip);
+    // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録
+    const topSkip=new Set();
+    placeExits(topSkip);
 
-    // 壁（下段は常に、上段は出口開口を除いて）
+    // 壁（各階の段。出口は最上階だけ開口）
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(grid[y][x]===1){
         const w=tileToWorld(x,y);
-        const lo=new THREE.Mesh(lowerWallGeo,wallMat); lo.position.set(w.x,FH/2,w.z); worldRoot.add(lo);
-        if(!upperSkip.has(x+","+y)){
-          const up=new THREE.Mesh(upperWallGeo,wallMat); up.position.set(w.x,FH*1.5,w.z); worldRoot.add(up);
+        for(let f=1;f<=NF;f++){
+          if(f===NF && topSkip.has(x+","+y)) continue;
+          const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,(f-1)*FH+FH/2,w.z); worldRoot.add(seg);
         }
       }
     }
 
-    // 階段（スロープ）を配置
+    // 階段（スロープ）を配置（lvl 階の高さから1フロア分上る）
     for(const s of stairs){
+      const base=(s.lvl-1)*FH;
       const run=s.a1-s.a0, rise=FH, len=Math.hypot(run,rise), ang=Math.atan2(rise,run);
       const widthAcross=s.c1-s.c0;
       let geo, ramp;
       if(s.axis==="x"){ geo=new THREE.BoxGeometry(len,0.3,widthAcross*0.96); ramp=new THREE.Mesh(geo,rampMat); ramp.rotation.z=ang; }
       else            { geo=new THREE.BoxGeometry(widthAcross*0.96,0.3,len); ramp=new THREE.Mesh(geo,rampMat); ramp.rotation.x=-ang; }
-      ramp.position.set(s.cx, rise/2, s.cz); worldRoot.add(ramp);
-      // 段差っぽい目印（数本のライン）
+      ramp.position.set(s.cx, base+rise/2, s.cz); worldRoot.add(ramp);
       for(let i=1;i<C.STAIR_LEN;i++){
         const tt=i/C.STAIR_LEN;
         const bar=new THREE.Mesh(new THREE.BoxGeometry(s.axis==="x"?0.12:widthAcross*0.9,0.05,s.axis==="x"?widthAcross*0.9:0.12),
           new THREE.MeshLambertMaterial({color:0x5b6066}));
         const ax=s.a0+tt*run;
-        bar.position.set(s.axis==="x"?ax:s.cx, tt*FH+0.18, s.axis==="x"?s.cz:ax);
+        bar.position.set(s.axis==="x"?ax:s.cx, base+tt*FH+0.18, s.axis==="x"?s.cz:ax);
         worldRoot.add(bar);
       }
     }
 
-    // 天井の蛍光灯
+    // 各階の天井の蛍光灯
     const stripMat=new THREE.MeshBasicMaterial({color:0xffffff});
     allFloorTiles().forEach((t,i)=>{ if(i%2) return;
       const w=tileToWorld(t.x,t.y);
-      const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,FH-0.06,w.z); worldRoot.add(a);
-      const b=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); b.position.set(w.x,FH*2-0.06,w.z); worldRoot.add(b);
+      for(let f=1;f<=NF;f++){
+        const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,f*FH-0.06,w.z); worldRoot.add(a);
+      }
     });
 
     // 追跡者（赤い人型・歩行者と同じ大きさ）を複数体
@@ -437,7 +455,7 @@ const CONFIG = {
       if(Math.abs(t.x-1)+Math.abs(t.y-1)<2) continue;
       const w=tileToWorld(t.x,t.y);
       const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-      const lvl=Math.random()<0.5?1:2;
+      const lvl=1+((Math.random()*NF)|0);
       const g=makeHuman(clothColors[i%clothColors.length]); g.position.set(px,(lvl-1)*FH,pz);
       worldRoot.add(g);
       pedestrians.push({group:g,x:px,z:pz,level:lvl,dir:Math.random()*6.28,timer:0});
@@ -455,8 +473,9 @@ const CONFIG = {
     return picks.map(t=>tileToWorld(t.x,t.y));
   }
 
-  // 出口（2階・外周）
-  function placeExits(upperSkip){
+  // 出口（最上階・外周）
+  function placeExits(topSkip){
+    const topBase=(NF-1)*FH;
     const cand=[];
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(grid[y][x]!==0 || stairTileSet.has(x+","+y)) continue;
@@ -475,32 +494,32 @@ const CONFIG = {
     }
     chosen.forEach((c,idx)=>{
       const no=idx+1;
-      upperSkip.add(c.bx+","+c.by);          // 上段の壁を開口
+      topSkip.add(c.bx+","+c.by);          // 最上段の壁を開口
       const w=tileToWorld(c.tx,c.ty);
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
-      // 出口サイン（2階の高さ、内側を向く）
+      const ph=topBase+2.0;
       const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.6,T*0.6),
         new THREE.MeshBasicMaterial({map:exitSignTexture(no),side:THREE.DoubleSide}));
-      panel.position.set(mx-c.ox*0.2, FH+2.0, mz-c.oy*0.2);
-      panel.lookAt(w.x, FH+2.0, w.z);
+      panel.position.set(mx-c.ox*0.2, ph, mz-c.oy*0.2);
+      panel.lookAt(w.x, ph, w.z);
       worldRoot.add(panel);
-      // 外の白い上り階段＋明るい空
-      buildOutsideStairs(mx,mz,c.ox,c.oy);
-      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz});
+      // 外の白い上り階段＋明るい空（最上階の高さから）
+      buildOutsideStairs(mx,mz,c.ox,c.oy,topBase);
+      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF});
     });
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
       ? C.CORRECT_EXIT : (exits.length?exits[(RNG()*exits.length)|0].no:1);
   }
 
-  function buildOutsideStairs(mx,mz,ox,oy){
+  function buildOutsideStairs(mx,mz,ox,oy,base){
     for(let i=0;i<7;i++){
-      const sx=mx+ox*(0.8+i*1.0), sz=mz+oy*(0.8+i*1.0), sy=FH+i*0.5;
+      const sx=mx+ox*(0.8+i*1.0), sz=mz+oy*(0.8+i*1.0), sy=base+i*0.5;
       const geo=ox!==0? new THREE.BoxGeometry(1.0,0.25,T*0.85) : new THREE.BoxGeometry(T*0.85,0.25,1.0);
       const step=new THREE.Mesh(geo,whiteMat); step.position.set(sx,sy,sz); worldRoot.add(step);
     }
     // 明るい空（霧を無視して白く）
     const sky=ox!==0? new THREE.BoxGeometry(0.5,T*5,T*5) : new THREE.BoxGeometry(T*5,T*5,0.5);
-    const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*T*5, FH+T*1.6, mz+oy*T*5); worldRoot.add(wall);
+    const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*T*5, base+T*1.6, mz+oy*T*5); worldRoot.add(wall);
   }
 
   // ---------- 入力 ----------
@@ -540,7 +559,7 @@ const CONFIG = {
     generateMaze(); findStairs(); buildWorld();
     const s=tileToWorld(1,1);
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
-    goalEl.textContent="目標："+correctExitNo+"番出口（2階）から脱出せよ";
+    goalEl.textContent="目標："+correctExitNo+"番出口（"+NF+"階）から脱出せよ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
@@ -581,8 +600,8 @@ const CONFIG = {
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
-    const si=stairInfo(player.x,player.z);
-    if(si){ player.y=si.y; player.level=si.t>=0.5?2:1; } else { player.y=(player.level-1)*FH; }
+    const si=stairInfo(player.x,player.z,player.level);
+    if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
     camera.position.set(player.x, player.y+C.EYE_HEIGHT, player.z);
   }
 
@@ -612,7 +631,8 @@ const CONFIG = {
       if(chasing){
         let tx,tz;
         if(same){ tx=chaser.lx; tz=chaser.lz; }
-        else { const s=nearestStair(chaser.x,chaser.z); tx=s?s.cx:chaser.x; tz=s?s.cz:chaser.z; }
+        else { const dir=player.level>chaser.level?1:-1; const s=nearestStairForMove(chaser.x,chaser.z,chaser.level,dir);
+               tx=s?s.cx:chaser.x; tz=s?s.cz:chaser.z; }
         moveToward(chaser,tx,tz,C.CHASER_SPEED,dt,CHASER_R);
       } else {
         chaser.wt-=dt; if(chaser.wt<=0){ chaser.dir=Math.random()*6.28; chaser.wt=1+Math.random()*2; }
@@ -621,8 +641,8 @@ const CONFIG = {
       }
       chaser._px=chaser.x; chaser._pz=chaser.z;
 
-      const si=stairInfo(chaser.x,chaser.z);
-      if(si){ chaser.y=si.y; chaser.level=si.t>=0.5?2:1; } else { chaser.y=(chaser.level-1)*FH; }
+      const si=stairInfo(chaser.x,chaser.z,chaser.level);
+      if(si){ chaser.y=si.y; chaser.level=si.t>=0.5?si.lvl+1:si.lvl; } else { chaser.y=(chaser.level-1)*FH; }
       chaser.group.position.set(chaser.x,chaser.y,chaser.z);
       chaser.group.lookAt(player.x, chaser.y+1, player.z);
     }
@@ -644,7 +664,7 @@ const CONFIG = {
     for(const chaser of chasers){
       if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
     }
-    if(player.level===2){
+    if(player.level===NF){
       for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<T*0.6 && e.no===correctExitNo){ endGame(true); return; } }
     }
   }
@@ -656,7 +676,8 @@ const CONFIG = {
     if(!C.SHOW_MAP) return; const cs=MAP_CELL;
     mapCtx.clearRect(0,0,mapCv.width,mapCv.height);
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      mapCtx.fillStyle = grid[y][x]===1?"#5b626b":(stairTileSet.has(x+","+y)?"#d98a32":"#eef1f4");
+      const sl=stairTileLevel[x+","+y];
+      mapCtx.fillStyle = grid[y][x]===1?"#5b626b":(sl?(sl===1?"#e0a050":"#b3651a"):"#eef1f4");
       mapCtx.fillRect(x*cs,y*cs,cs,cs);
     }
     for(const e of exits){ const px=(e.x/T)*cs, py=(e.z/T)*cs;
