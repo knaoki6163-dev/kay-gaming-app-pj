@@ -66,9 +66,9 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 32,             // 迷路の固定シード（独立3マス幅ホーム5面+各階段／到達性を検証済み）
+  SEED: 1,              // 迷路の固定シード（縦長ホーム5面+各階段／全フロア連結・到達性を検証済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
-  COLS: 27, ROWS: 21,   // 迷路の広さ（マス数。奇数推奨。各フロア独立・面積約2倍）
+  COLS: 27, ROWS: 49,   // 迷路の広さ（ホーム長＝電車長の3倍に合わせて縦長）
   TILE: 5,              // 1マスのワールドサイズ
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
@@ -98,7 +98,7 @@ const CONFIG = {
   EYE_HEIGHT: 1.6,      // 視点の高さ
 
   LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
-  PLAZA_COUNTS: {1:0, 2:9, 3:8}, // 各フロアの広場の数（地下2階はプラットホームなので未使用）
+  PLAZA_COUNTS: {1:0, 2:16, 3:14}, // 各フロアの広場の数（地下2階はプラットホームなので未使用）
 
   EXIT_COUNT: 6,        // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.34";
+  const APP_VERSION = "Ver.35";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -291,10 +291,10 @@ const CONFIG = {
   // 地下2階＝駅のプラットホーム（縦長・2マス幅の島式ホーム5面を独立配置、両側に電車。各ホーム同位置に階段）
   const LANES=[[2,4],[7,9],[12,14],[17,19],[22,24]];          // 5つのホーム(3マス幅)
   const TRACKS=[[0,1],[5,6],[10,11],[15,16],[20,21],[25,26]]; // 線路(電車)
-  const PLAT_BOT=14, STAIR_Y0=15;                             // ホームは y=1..14、階段はその下端(y15〜)
+  const PLAT_BOT=42, STAIR_Y0=43;                             // ホームは y=1..42（電車長3倍）、階段は下端(y43〜)
   const CENTER_COLS=LANES.map(l=>l[0]+1);                     // 各ホームの中央列
-  const OBJ_ROWS=[2,4,6,8,10,12];                             // 中央に置く物の行（柱は等間隔）
-  function objType(y){ return y===6?"kiosk":(y===10?"sign":(y===2?"trash":"pillar")); }
+  const OBJ_ROWS=[]; for(let _y=3;_y<=PLAT_BOT-2;_y+=4) OBJ_ROWS.push(_y); // 中央に置く物の行（等間隔）
+  function objType(y){ const i=((y-3)/4)|0; return i%5===1?"kiosk":(i%5===2?"sign":(i%5===3?"trash":"pillar")); }
   function inLane(x){ return LANES.some(l=>x>=l[0]&&x<=l[1]); }
   function isTrainZone(x,y){ return TRACKS.some(l=>x>=l[0]&&x<=l[1]) && y>=1 && y<=PLAT_BOT; }
   function generatePlatformFloor(){
@@ -354,20 +354,59 @@ const CONFIG = {
     }
   }
   // 階段配置後の行き止まり除去（階段は壊さないよう保護）
+  // 連結成分（floorのみ）
+  function components(g){
+    const seen=new Set(), cs=[];
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(g[y][x]!==0||seen.has(x+","+y)) continue;
+      const comp=[], q=[[x,y]]; seen.add(x+","+y); let i=0;
+      while(i<q.length){ const [cx,cy]=q[i++]; comp.push([cx,cy]);
+        for(const [dx,dy] of DIRS4){ const nx=cx+dx,ny=cy+dy;
+          if(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS&&g[ny][nx]===0&&!seen.has(nx+","+ny)){ seen.add(nx+","+ny); q.push([nx,ny]); } } }
+      cs.push(comp);
+    }
+    return cs;
+  }
+  // 分断された連結成分を、保護壁(pw)を避けつつ最短で掘ってつなぐ
+  function connectComps(g,pw){
+    let cs=components(g); if(cs.length<=1) return;
+    cs.sort((a,b)=>b.length-a.length);
+    let mainSet=new Set(cs[0].map(c=>c[0]+","+c[1]));
+    for(let i=1;i<cs.length;i++){
+      if(mainSet.has(cs[i][0][0]+","+cs[i][0][1])) continue;
+      const dist={}, prev={}, dq=[];
+      for(const [x,y] of cs[i]){ const k=x+","+y; dist[k]=0; dq.push([x,y]); }
+      let hit=null;
+      while(dq.length){
+        const [x,y]=dq.shift(), k=x+","+y, d=dist[k]; if(d===undefined) continue;
+        if(mainSet.has(k)){ hit=k; break; }
+        for(const [dx,dy] of DIRS4){ const nx=x+dx,ny=y+dy; if(!(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS)) continue;
+          const nk=nx+","+ny, isF=g[ny][nx]===0; let cost;
+          if(isF) cost=0; else if(pw.has(nk)||!inInner(nx,ny)) continue; else cost=1;
+          const nd=d+cost;
+          if(dist[nk]===undefined||nd<dist[nk]){ dist[nk]=nd; prev[nk]=k; if(cost===0) dq.unshift([nx,ny]); else dq.push([nx,ny]); }
+        }
+      }
+      if(hit){ let k=hit; while(prev[k]!==undefined){ const p=k.split(","); const x=+p[0],y=+p[1]; if(g[y][x]===1) g[y][x]=0; k=prev[k]; } }
+      mainSet=new Set(components(g).sort((a,b)=>b.length-a.length)[0].map(c=>c[0]+","+c[1]));
+    }
+  }
   function cleanupDeadEnds(){
-    const pf={}, pw={};
-    for(let f=1;f<=NF;f++){ pf[f]=new Set(); pw[f]=new Set(); }
-    const asArr=t=>Array.isArray(t[0])?t:[t];   // entry/exit/beyondは単一or配列
+    const pf={}, pw={}, pcn={};   // pcn=連結修復用の保護（手すりは除外＝つなぐために通す）
+    for(let f=1;f<=NF;f++){ pf[f]=new Set(); pw[f]=new Set(); pcn[f]=new Set(); }
+    const asArr=t=>Array.isArray(t[0])?t:[t];
     for(const s of stairs){
       const lv=s.lvl;
       s.run.forEach(([x,y])=>{ pf[lv].add(x+","+y); pf[lv+1].add(x+","+y); });
-      asArr(s.entry).forEach(([x,y])=>pf[lv].add(x+","+y));
-      asArr(s.exit).forEach(([x,y])=>{ pf[lv+1].add(x+","+y); pw[lv].add(x+","+y); });
+      asArr(s.entry).forEach(([x,y])=>{ pf[lv].add(x+","+y); pw[lv+1].add(x+","+y); pcn[lv+1].add(x+","+y); });
+      asArr(s.exit).forEach(([x,y])=>{ pf[lv+1].add(x+","+y); pw[lv].add(x+","+y); pcn[lv].add(x+","+y); });
       asArr(s.beyond).forEach(([x,y])=>pf[lv+1].add(x+","+y));
-      asArr(s.entry).forEach(([x,y])=>pw[lv+1].add(x+","+y));
       s.rails.forEach(([x,y])=>{ pw[lv].add(x+","+y); pw[lv+1].add(x+","+y); });
     }
-    for(let f=2;f<=NF;f++){ braidConnect(grids[f], pw[f]); fillDead(grids[f], pf[f]); } // 地下2階(ホーム)は対象外
+    for(let f=2;f<=NF;f++){
+      braidConnect(grids[f], pw[f]); fillDead(grids[f], pf[f]);
+      connectComps(grids[f], pcn[f]); fillDead(grids[f], pf[f]);
+    }
   }
 
   // ---------- 階段（フロア間を貫く。非対称に掘る：上り口側=下階の通路／降り口側=上階の通路、坂の反対は壁） ----------
@@ -847,7 +886,7 @@ const CONFIG = {
     chasers=[];
     const usedSpawns=[];
     C.CHASER_FLOORS.forEach(lvl=>{
-      const cw=spawnOnFloor(lvl, usedSpawns);
+      const cw=(lvl===1)?spawnOnLane(playerStartLane):spawnOnFloor(lvl, usedSpawns); // 地下2階の敵はプレイヤーと同じホーム
       const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
       g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
       g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
@@ -873,14 +912,22 @@ const CONFIG = {
     }
   }
 
-  // 指定フロアの、開始地点や既存湧きから離れた湧き位置（ワールド座標）
+  // 指定フロアの、既存湧きから離れた湧き位置（ワールド座標）
   function spawnOnFloor(f, used){
-    let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&Math.abs(t.x-1)+Math.abs(t.y-1)<5));
+    let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y));
     for(let i=tiles.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[tiles[i],tiles[j]]=[tiles[j],tiles[i]];}
     let pick=tiles[0]||{x:1,y:1};
     for(const t of tiles){ if(!used.some(u=>u.f===f&&Math.abs(u.x-t.x)+Math.abs(u.y-t.y)<5)){pick=t;break;} }
     used.push({f,x:pick.x,y:pick.y});
     return tileToWorld(pick.x,pick.y);
+  }
+  // 指定ホーム(lane)上のランダム位置（地下2階の敵をプレイヤーと同じホームに置く用）
+  function spawnOnLane(idx){
+    const [x0,x1]=LANES[idx]; const tiles=[];
+    for(let y=2;y<=PLAT_BOT-1;y++) for(let x=x0;x<=x1;x++)
+      if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y)) tiles.push({x,y});
+    const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:2};
+    return tileToWorld(t.x,t.y);
   }
 
   // 出口（最上階・外周）
@@ -907,19 +954,21 @@ const CONFIG = {
       topSkip.add(c.bx+","+c.by);          // 最上段の壁を開口
       const w=tileToWorld(c.tx,c.ty);
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
-      // 縦長の出口看板を、外へ続く上り階段の「左横」に立てる
-      const leftx=c.oy, leftz=-c.ox;                 // 外を向いたときの左方向
-      const ph=topBase+1.7;
-      const sx=mx + c.ox*T*0.3 + leftx*T*0.62, sz=mz + c.oy*T*0.3 + leftz*T*0.62;
-      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.3,T*0.62),  // 縦長
-        new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide}));
-      panel.position.set(sx, ph, sz);
-      panel.lookAt(w.x, ph, w.z);                    // 構内側（プレイヤー側）を向く
-      worldRoot.add(panel);
-      // 看板を支える細いポール（床から看板下まで）
-      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph-topBase, 0.1),
-        new THREE.MeshLambertMaterial({color:0x8b9197}));
-      post.position.set(sx, topBase+(ph-topBase)/2, sz); worldRoot.add(post);
+      const signTex=new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide});
+      // ① ドアの真上に大きな出口番号サイン（構内側を向く＝必ず見える）
+      const ph1=topBase+FH*0.78;
+      const sign1=new THREE.Mesh(new THREE.PlaneGeometry(T*0.9,T*0.7), signTex);
+      sign1.position.set(mx-c.ox*0.15, ph1, mz-c.oy*0.15);
+      sign1.lookAt(w.x, ph1, w.z);                   // 構内側（プレイヤー）を向く
+      worldRoot.add(sign1);
+      // ② 外へ続く上り階段の左横に、縦長の出口番号サイン＋ポール
+      const leftx=c.oy, leftz=-c.ox;
+      const ph2=topBase+1.7;
+      const sx=mx + c.ox*T*0.45 + leftx*T*0.7, sz=mz + c.oy*T*0.45 + leftz*T*0.7;
+      const sign2=new THREE.Mesh(new THREE.PlaneGeometry(T*0.34,T*0.7), signTex);
+      sign2.position.set(sx, ph2, sz); sign2.lookAt(w.x, ph2, w.z); worldRoot.add(sign2);
+      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-topBase, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
+      post.position.set(sx, topBase+(ph2-topBase)/2, sz); worldRoot.add(post);
       // 外の白い上り階段＋明るい空（最上階の高さから）
       buildOutsideStairs(mx,mz,c.ox,c.oy,topBase);
       exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF});
@@ -973,17 +1022,20 @@ const CONFIG = {
 
   // ---------- 進行 ----------
   // 5つのホームのどこかをランダムに開始位置として返す
+  let playerStartLane=0;
   function platformStartTile(){
-    const tiles=[];
-    for(const [x0,x1] of LANES) for(let y=1;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++)
+    const li=(Math.random()*LANES.length)|0; playerStartLane=li;   // どのホームかを記録
+    const [x0,x1]=LANES[li]; const tiles=[];
+    for(let y=1;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++)
       if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y)) tiles.push({x,y});
-    const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:1,y:1};
+    const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:1};
     return tileToWorld(t.x,t.y);
   }
   function startGame(){
     RNG = mulberry32(C.SEED);   // 毎回同じマップにする
-    generateAllFloors(); findStairs(); cleanupDeadEnds(); buildWorld();
-    const s=platformStartTile();    // 5つのホームの任意の場所からランダム開始
+    generateAllFloors(); findStairs(); cleanupDeadEnds();
+    const s=platformStartTile();    // 5つのホームのどれかをランダムに選んで開始（ホームを記録）
+    buildWorld();                   // 地下2階の敵を同じホームに置くため開始ホーム確定後に構築
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
     goalEl.textContent="目標："+correctExitNo+"番出口（地上）から脱出せよ";
     hud.classList.remove("hidden");
