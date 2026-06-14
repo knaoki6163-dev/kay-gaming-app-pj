@@ -66,7 +66,7 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 136,            // 迷路の固定シード（開放的・全フロア連結・到達可能を検証済み）
+  SEED: 516,            // 迷路の固定シード（開放的・行き止まり最小・全フロア連結を検証済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
   COLS: 27, ROWS: 21,   // 迷路の広さ（マス数。奇数推奨。各フロア独立・面積約2倍）
   TILE: 5,              // 1マスのワールドサイズ
@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.30";
+  const APP_VERSION = "Ver.31";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -233,6 +233,17 @@ const CONFIG = {
   const ceilTex  = makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false}); // 天井=壁より少し明るいグレー
   wallTex.repeat.set(2,2);
 
+  // 縦長の出口看板テクスチャ（出/口を縦並び＋大きな番号）
+  function exitSignTextureV(n){
+    const w=170,h=400,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle="#1a6b32";g.fillRect(0,0,w,h);
+    g.strokeStyle="#fff";g.lineWidth=8;g.strokeRect(7,7,w-14,h-14);
+    g.fillStyle="#fff";g.textAlign="center";g.textBaseline="middle";
+    g.font="bold 56px sans-serif";g.fillText("出",w/2,h*0.15);g.fillText("口",w/2,h*0.30);
+    g.font="bold 130px sans-serif";g.fillText(String(n),w/2,h*0.60);
+    g.font="bold 30px sans-serif";g.fillText("EXIT",w/2,h*0.86);
+    const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;
+  }
   function exitSignTexture(n){
     const w=256,h=256,cv=document.createElement("canvas"); cv.width=w; cv.height=h;
     const g=cv.getContext("2d");
@@ -274,9 +285,66 @@ const CONFIG = {
       const rx=1+((RNG()*(C.COLS-1-rw))|0), ry=1+((RNG()*(C.ROWS-1-rh))|0);
       for(let y=ry;y<ry+rh;y++)for(let x=rx;x<rx+rw;x++) g[y][x]=0;
     }
+    braidFill(g);   // 行き止まりを除去（つなぐ／埋める）
     return g;
   }
   function generateAllFloors(){ grids={}; for(let f=1;f<=NF;f++) grids[f]=generateMazeGrid(f); }
+
+  // ---------- 行き止まり除去 ----------
+  const DIRS4=[[1,0],[-1,0],[0,1],[0,-1]];
+  function gFloorG(g,x,y){ return x>=0&&y>=0&&x<C.COLS&&y<C.ROWS && g[y][x]===0; }
+  function braidFill(g){
+    // 1) 行き止まりを並行通路へつないでループ化
+    for(let p=0;p<4;p++){ let ch=false;
+      for(let y=1;y<C.ROWS-1;y++)for(let x=1;x<C.COLS-1;x++){
+        if(g[y][x]!==0) continue;
+        let c=0; for(const[dx,dy]of DIRS4) if(gFloorG(g,x+dx,y+dy)) c++;
+        if(c!==1) continue;
+        for(const[dx,dy]of DIRS4){ const nx=x+dx,ny=y+dy,fx=x+2*dx,fy=y+2*dy;
+          if(inInner(nx,ny)&&g[ny][nx]===1&&gFloorG(g,fx,fy)){ g[ny][nx]=0; ch=true; break; } }
+      } if(!ch) break;
+    }
+    // 2) 残りの行き止まりは埋める（開始マスは除く）
+    for(let p=0;p<C.COLS+C.ROWS;p++){ let ch=false;
+      for(let y=1;y<C.ROWS-1;y++)for(let x=1;x<C.COLS-1;x++){
+        if(g[y][x]!==0||(x===1&&y===1)) continue;
+        let c=0; for(const[dx,dy]of DIRS4) if(gFloorG(g,x+dx,y+dy)) c++;
+        if(c<=1){ g[y][x]=1; ch=true; }
+      } if(!ch) break;
+    }
+  }
+  function braidConnect(g,pw){
+    for(let p=0;p<5;p++){ let ch=false;
+      for(let y=1;y<C.ROWS-1;y++)for(let x=1;x<C.COLS-1;x++){
+        if(g[y][x]!==0||(x===1&&y===1)) continue;
+        let c=0; for(const[dx,dy]of DIRS4) if(gFloorG(g,x+dx,y+dy)) c++;
+        if(c!==1) continue;
+        for(const[dx,dy]of DIRS4){ const nx=x+dx,ny=y+dy,fx=x+2*dx,fy=y+2*dy;
+          if(inInner(nx,ny)&&g[ny][nx]===1&&!pw.has(nx+","+ny)&&gFloorG(g,fx,fy)){ g[ny][nx]=0; ch=true; break; } }
+      } if(!ch) break;
+    }
+  }
+  function fillDead(g,pf){
+    for(let p=0;p<C.COLS+C.ROWS;p++){ let ch=false;
+      for(let y=1;y<C.ROWS-1;y++)for(let x=1;x<C.COLS-1;x++){
+        if(g[y][x]!==0||(x===1&&y===1)||pf.has(x+","+y)) continue;
+        let c=0; for(const[dx,dy]of DIRS4) if(gFloorG(g,x+dx,y+dy)) c++;
+        if(c<=1){ g[y][x]=1; ch=true; }
+      } if(!ch) break;
+    }
+  }
+  // 階段配置後の行き止まり除去（階段は壊さないよう保護）
+  function cleanupDeadEnds(){
+    const pf={}, pw={};
+    for(let f=1;f<=NF;f++){ pf[f]=new Set(); pw[f]=new Set(); }
+    for(const s of stairs){
+      s.run.forEach(([x,y])=>{ pf[s.lvl].add(x+","+y); pf[s.lvl+1].add(x+","+y); });
+      pf[s.lvl].add(s.entry.join(",")); pf[s.lvl+1].add(s.exit.join(",")); pf[s.lvl+1].add(s.beyond.join(","));
+      s.rails.forEach(([x,y])=>{ pw[s.lvl].add(x+","+y); pw[s.lvl+1].add(x+","+y); });
+      pw[s.lvl].add(s.exit.join(",")); pw[s.lvl+1].add(s.entry.join(","));
+    }
+    for(let f=1;f<=NF;f++){ braidConnect(grids[f], pw[f]); fillDead(grids[f], pf[f]); }
+  }
 
   // ---------- 階段（フロア間を貫く。非対称に掘る：上り口側=下階の通路／降り口側=上階の通路、坂の反対は壁） ----------
   let stairs = [];
@@ -693,17 +761,17 @@ const CONFIG = {
       topSkip.add(c.bx+","+c.by);          // 最上段の壁を開口
       const w=tileToWorld(c.tx,c.ty);
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
-      // 小さな出口看板を、外へ続く上り階段の横に立てる
-      const perpx=c.oy, perpz=c.ox;                  // 外向きと直交する横方向
-      const ph=topBase+1.6;
-      const sx=mx + c.ox*T*0.55 + perpx*T*0.7, sz=mz + c.oy*T*0.55 + perpz*T*0.7;
-      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.22,T*0.22),
-        new THREE.MeshBasicMaterial({map:exitSignTexture(no),side:THREE.DoubleSide}));
+      // 縦長の出口看板を、外へ続く上り階段の「左横」に立てる
+      const leftx=c.oy, leftz=-c.ox;                 // 外を向いたときの左方向
+      const ph=topBase+1.7;
+      const sx=mx + c.ox*T*0.3 + leftx*T*0.62, sz=mz + c.oy*T*0.3 + leftz*T*0.62;
+      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.3,T*0.62),  // 縦長
+        new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide}));
       panel.position.set(sx, ph, sz);
       panel.lookAt(w.x, ph, w.z);                    // 構内側（プレイヤー側）を向く
       worldRoot.add(panel);
-      // 看板を支える細いポール
-      const post=new THREE.Mesh(new THREE.BoxGeometry(0.08, ph-topBase, 0.08),
+      // 看板を支える細いポール（床から看板下まで）
+      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph-topBase, 0.1),
         new THREE.MeshLambertMaterial({color:0x8b9197}));
       post.position.set(sx, topBase+(ph-topBase)/2, sz); worldRoot.add(post);
       // 外の白い上り階段＋明るい空（最上階の高さから）
@@ -760,7 +828,7 @@ const CONFIG = {
   // ---------- 進行 ----------
   function startGame(){
     RNG = mulberry32(C.SEED);   // 毎回同じマップにする
-    generateAllFloors(); findStairs(); buildWorld();
+    generateAllFloors(); findStairs(); cleanupDeadEnds(); buildWorld();
     const s=tileToWorld(1,1);
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
     goalEl.textContent="目標："+correctExitNo+"番出口（地上）から脱出せよ";
