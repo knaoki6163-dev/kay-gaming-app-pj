@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.48";
+  const APP_VERSION = "Ver.49";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -598,7 +598,7 @@ const CONFIG = {
   const underCeilTex=makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false});
   const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide});
   const blackCeilMat=new THREE.MeshBasicMaterial({color:0x202327,side:THREE.DoubleSide}); // 地下2階の天井はグレー寄りの黒（不透過）
-  const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
+  const ceilMat=new THREE.MeshBasicMaterial({map:ceilTex,side:THREE.DoubleSide}); // 地上の天井=地下1階と同じ見た目(無影・同色)
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
   const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
   // 壁の看板・ポスター（数種をあらかじめ生成して使い回す）
@@ -838,17 +838,23 @@ const CONFIG = {
     // 下の各階（最上階以外）にも白めグレーの天井を貼る
     for(let f=1;f<NF;f++) buildFloorCeilings(f);
 
-    // 各階の天井照明
+    // 各階の天井照明（地上階は数も明るさも増やして明るく）
     for(let f=2;f<=NF;f++){
+      const isTop=(f===NF), liMax=isTop?16:8;
       let li=0;
       for(let y=2;y<C.ROWS-1;y+=3){ for(let x=2;x<C.COLS-1;x+=3){
-        if(li>=8) break;
+        if(li>=liMax) break;
         if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){
           const w=tileToWorld(x,y);
-          const pl=new THREE.PointLight(0xfff2d8, 0.5, T*6, 2);
-          pl.position.set(w.x, (f===NF?TOPCEIL:f*FH)-0.5, w.z); worldRoot.add(pl); li++;
+          const pl=new THREE.PointLight(isTop?0xfff6ec:0xfff2d8, isTop?0.85:0.5, isTop?T*8:T*6, 2);
+          pl.position.set(w.x, (isTop?TOPCEIL:f*FH)-0.5, w.z); worldRoot.add(pl); li++;
         }
       }}
+    }
+    // 地上階の自然光（天窓のような上からの柔らかい光。地上付近を広く照らす）
+    for(let i=0;i<3;i++){
+      const sky=new THREE.PointLight(0xeaf2ff, 0.4, W*0.7, 1.6);
+      sky.position.set(W*(0.25+0.25*i), TOPCEIL-1.2, D*(0.3+0.2*i)); worldRoot.add(sky);
     }
 
     // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録＋幅広出口はgridsを掘る
