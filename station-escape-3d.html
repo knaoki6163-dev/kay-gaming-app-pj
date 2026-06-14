@@ -188,7 +188,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.42";
+  const APP_VERSION = "Ver.43";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -813,17 +813,8 @@ const CONFIG = {
     const floor1=new THREE.Mesh(new THREE.PlaneGeometry(W,D),floorMat);
     floor1.rotation.x=-Math.PI/2; floor1.position.set(W/2,0,D/2); worldRoot.add(floor1);
 
-    // 各階の床スラブ（そのフロアの迷路の床。階段マスは抜く＝吹き抜け）
-    for(let f=2;f<=NF;f++){
-      for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-        if(grids[f][y][x]===0 && !slabOmit[f].has(x+","+y)){
-          const w=tileToWorld(x,y);
-          const q=new THREE.Mesh(new THREE.PlaneGeometry(T,T),slabMat);
-          // 下階の壁の上面と同じ高さでチカチカ(z-fighting)するのを防ぐため僅かに持ち上げる
-          q.rotation.x=-Math.PI/2; q.position.set(w.x,(f-1)*FH+0.04,w.z); worldRoot.add(q);
-        }
-      }
-    }
+    // 各階の床スラブは「出口の開口(grids書き換え)」の後に作る（穴が空かないように）→ placeExits の後で実行
+
     // 最上階(地上)の天井は少し高く
     const GHX=C.GROUND_CEIL_EXTRA, TOPCEIL=FH*NF+GHX;
     ceilTex.repeat.set(C.COLS,C.ROWS);
@@ -845,9 +836,20 @@ const CONFIG = {
       }}
     }
 
-    // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録
+    // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録＋幅広出口はgridsを掘る
     const topSkip=new Set();
     placeExits(topSkip);
+
+    // 各階の床スラブ（出口の開口後に作る。階段マスは抜く＝吹き抜け）
+    for(let f=2;f<=NF;f++){
+      for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+        if(grids[f][y][x]===0 && !slabOmit[f].has(x+","+y)){
+          const w=tileToWorld(x,y);
+          const q=new THREE.Mesh(new THREE.PlaneGeometry(T,T),slabMat);
+          q.rotation.x=-Math.PI/2; q.position.set(w.x,(f-1)*FH+0.04,w.z); worldRoot.add(q);
+        }
+      }
+    }
 
     // 壁（地下1階・地上は迷路の壁。出口は最上階だけ開口）
     for(let f=2;f<=NF;f++){
@@ -914,7 +916,7 @@ const CONFIG = {
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     const poolByFloor={};
-    for(let f=1;f<=NF;f++) poolByFloor[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&Math.abs(t.x-1)+Math.abs(t.y-1)<2));
+    for(let f=1;f<=NF;f++) poolByFloor[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
     const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
     let pi=0;
     for(let f=1;f<=NF;f++){
@@ -958,9 +960,9 @@ const CONFIG = {
   }
   // 指定ホーム(lane)上のランダム位置（地下2階の敵をプレイヤーと同じホームに置く用）
   function spawnOnLane(idx){
-    const [x0,x1]=LANES[idx]; const tiles=[];
+    const [x0,x1]=LANES[idx]; const xc=x0+1; const tiles=[];
     for(let y=PLAT_TOP;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++)
-      if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y)) tiles.push({x,y});
+      if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y) && !(x===xc&&OBJ_ROWS.includes(y))) tiles.push({x,y});
     const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:PLAT_TOP};
     return tileToWorld(t.x,t.y);
   }
@@ -1083,9 +1085,9 @@ const CONFIG = {
   let playerStartLane=0;
   function platformStartTile(){
     const li=(Math.random()*LANES.length)|0; playerStartLane=li;   // どのホームかを記録
-    const [x0,x1]=LANES[li]; const tiles=[];
+    const [x0,x1]=LANES[li]; const xc=x0+1; const tiles=[];
     for(let y=PLAT_TOP;y<=PLAT_BOT;y++) for(let x=x0;x<=x1;x++)
-      if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y)) tiles.push({x,y});
+      if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y) && !(x===xc&&OBJ_ROWS.includes(y))) tiles.push({x,y});
     const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:PLAT_TOP};
     return tileToWorld(t.x,t.y);
   }
