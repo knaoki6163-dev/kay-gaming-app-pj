@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.52";
+  const APP_VERSION = "Ver.53";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -741,28 +741,37 @@ const CONFIG = {
     const cand=[];
     for(let y=2;y<C.ROWS-2;y++)for(let x=2;x<C.COLS-2;x++){
       if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
-      for(const [dx,dy] of dirs){ if(gWall(f,x+dx,y+dy)){ cand.push({x,y,dx,dy}); break; } }
+      for(const [dx,dy] of dirs){
+        if(!gWall(f,x+dx,y+dy)) continue;
+        // 横幅3マスぶん、後ろが平らな壁になっている所だけ（幅広の改札用に）
+        const px=(dx===0)?1:0, py=(dy===0)?1:0;
+        if(!gWall(f,x+dx+px,y+dy+py) || !gWall(f,x+dx-px,y+dy-py)) continue;
+        if(stairTileSet.has((x+px)+","+(y+py))||stairTileSet.has((x-px)+","+(y-py))) continue;
+        cand.push({x,y,dx,dy,px,py}); break;
+      }
     }
     for(let i=cand.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [cand[i],cand[j]]=[cand[j],cand[i]]; }
     const signMat=new THREE.MeshBasicMaterial({map:deptSignTex(),side:THREE.DoubleSide});
-    const glassMat=new THREE.MeshBasicMaterial({map:deptGlassTex(),side:THREE.DoubleSide});
+    const glassTex=deptGlassTex(); glassTex.wrapS=THREE.RepeatWrapping; glassTex.repeat.set(3,1); // 幅広ぶんガラス戸を3枚並べる
+    const glassMat=new THREE.MeshBasicMaterial({map:glassTex,side:THREE.DoubleSide});
     const frameMat=new THREE.MeshLambertMaterial({color:0x3a4047,side:THREE.DoubleSide});
-    const base=(f-1)*FH, want=4+((Math.random()*2)|0); // 4〜5カ所
+    const base=(f-1)*FH, want=12+((Math.random()*4)|0); // 従来の3倍＝12〜15カ所
+    const WD=3*T;                                       // 開口幅＝地上の通常出口(1マス)の3倍
     const placed=[];
     for(const c of cand){
       if(placed.length>=want) break;
-      if(placed.some(p=>Math.abs(p.x-c.x)+Math.abs(p.y-c.y)<8)) continue;
+      if(placed.some(p=>Math.abs(p.x-c.x)+Math.abs(p.y-c.y)<5)) continue;
       placed.push(c);
       const w=tileToWorld(c.x,c.y);
       deptDoors.push({x:w.x, z:w.z});   // デパートの人の出入り口（手前の床）
       const fx=w.x+c.dx*(T/2-0.06), fz=w.z+c.dy*(T/2-0.06);  // 壁手前
       const bx=w.x+c.dx*(T/2-0.02), bz=w.z+c.dy*(T/2-0.02);  // 枠は少し奥
-      const frame=new THREE.Mesh(new THREE.PlaneGeometry(4.0,3.4), frameMat);
-      frame.position.set(bx, base+1.7, bz); frame.lookAt(w.x, base+1.7, w.z); worldRoot.add(frame);
-      const door=new THREE.Mesh(new THREE.PlaneGeometry(3.4,2.6), glassMat);
-      door.position.set(fx, base+1.3, fz); door.lookAt(w.x, base+1.3, w.z); worldRoot.add(door);
-      const sgn=new THREE.Mesh(new THREE.PlaneGeometry(3.8,0.9), signMat);
-      sgn.position.set(fx, base+3.15, fz); sgn.lookAt(w.x, base+3.15, w.z); worldRoot.add(sgn);
+      const frame=new THREE.Mesh(new THREE.PlaneGeometry(WD+0.6,3.7), frameMat);
+      frame.position.set(bx, base+1.85, bz); frame.lookAt(w.x, base+1.85, w.z); worldRoot.add(frame);
+      const door=new THREE.Mesh(new THREE.PlaneGeometry(WD*0.92,2.9), glassMat);
+      door.position.set(fx, base+1.45, fz); door.lookAt(w.x, base+1.45, w.z); worldRoot.add(door);
+      const sgn=new THREE.Mesh(new THREE.PlaneGeometry(WD*0.95,1.05), signMat);
+      sgn.position.set(fx, base+3.4, fz); sgn.lookAt(w.x, base+3.4, w.z); worldRoot.add(sgn);
     }
   }
 
@@ -965,7 +974,7 @@ const CONFIG = {
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-        const p={x:px,z:pz,level:f,y:(f-1)*FH,dir:Math.random()*6.28,timer:Math.random()*3,rush:0,ci:(pi++)%clothColors.length,ry:0,kind:"W",goal:0,ride:null,roleT:Math.random()*8};
+        const p={x:px,z:pz,level:f,y:(f-1)*FH,dir:Math.random()*6.28,timer:Math.random()*3,rush:0,ci:(pi++)%clothColors.length,ry:0,kind:"W",goal:0,ride:null,trip:-1,lastStair:-1,roleT:Math.random()*8};
         setPedRole(p);   // 5割は徘徊、5割はフロア間移動
         pedestrians.push(p);
       }
@@ -975,11 +984,11 @@ const CONFIG = {
   }
   // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動（地上→地下1階, それ以外→上の階）
   function setPedRole(p){
-    if(Math.random()<0.5){ p.kind="M"; p.goal=p.level+(p.level===NF?-1:1); }
-    else { p.kind="W"; p.goal=0; }
+    if(Math.random()<0.5){ p.kind="M"; p.trip=pickStair(p); p.goal=(p.trip>=0)?p.level+((p.level===NF)?-1:1):0; if(p.trip<0) p.kind="W"; }
+    else { p.kind="W"; p.goal=0; p.trip=-1; }
     p.ride=null;
   }
-  // 経路場(フローフィールド): 各フロア・方向ごとに、最寄りの接続階段へ向かう一歩を持つ
+  // フロー場(BFS)。階段ごとに「その階段の昇降口へ向かう一歩」を持つ＝目的の階段を選べる
   function bfsField(f,targets){
     const dist=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
     const step=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
@@ -998,22 +1007,32 @@ const CONFIG = {
     }
     return {dist,step};
   }
+  // flowFields["<floor>_<stairId>"]: そのフロアからその階段へ向かう経路場
   function buildFlowFields(){
     flowFields={};
-    const g3down=[], g2up=[], g1up=[];
-    for(const s of stairs){
-      if(s.lvl===2){ g2up.push(s.entry); g3down.push(s.exit); }
-      else if(s.lvl===1){ g1up.push(s.entry); }
-    }
-    if(NF>=3) flowFields[NF+"_-1"]=bfsField(NF,g3down);   // 地上→地下1階
-    flowFields["2_1"]=bfsField(2,g2up);                   // 地下1階→地上
-    flowFields["1_1"]=bfsField(1,g1up);                   // 地下2階→地下1階
+    stairs.forEach((s,i)=>{
+      if(s.lvl===2){ flowFields[(NF)+"_"+i]=bfsField(NF,[s.exit]);  // 地上→その階段(降り口)
+                     flowFields["2_"+i]=bfsField(2,[s.entry]); }    // 地下1階→その階段(上り口)
+      else if(s.lvl===1){ flowFields["1_"+i]=bfsField(1,[s.entry]); } // 地下2階→その階段
+    });
   }
-  function flowAt(level,dir,x,z){
-    const ff=flowFields[level+"_"+dir]; if(!ff) return null;
+  function fieldAt(floor,sid,x,z){
+    const ff=flowFields[floor+"_"+sid]; if(!ff) return null;
     const tx=Math.floor(x/T), ty=Math.floor(z/T);
     if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return null;
     return {dist:ff.dist[ty][tx], step:ff.step[ty][tx]};
+  }
+  // 現在地から行ける(=経路場が届く)階段のうち、直前に使った階段を除いて最も近いものを選ぶ
+  function pickStair(p){
+    const f=p.level, dir=(f===NF)?-1:1;
+    let best=-1,bd=1e9, any=-1,ad=1e9;
+    for(let i=0;i<stairs.length;i++){ const s=stairs[i];
+      if(dir>0 ? s.lvl!==f : s.lvl+1!==f) continue;
+      const fl=fieldAt(f,i,p.x,p.z); if(!fl || fl.dist<0) continue;   // ここから到達不能な階段は除外
+      if(fl.dist<ad){ ad=fl.dist; any=i; }
+      if(i!==p.lastStair && fl.dist<bd){ bd=fl.dist; best=i; }
+    }
+    return best>=0?best:any;   // 直前と別の階段を優先。無ければ到達可能な最寄り
   }
   // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
   let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
@@ -1328,13 +1347,13 @@ const CONFIG = {
   function moverStep(p, dt){
     if(p.rush>0) p.rush-=dt;
     if(p.ride){ pedMoveDir(p, p.ride.dx-p.x, p.ride.dz-p.z, dt, true); return; }
-    const dir=(p.level===NF)?-1:1;
-    const fl=flowAt(p.level,dir,p.x,p.z);
-    if(fl && fl.dist>=0 && fl.dist<=1){          // 階段の昇降口に到着→階段に乗る
-      const s=nearestStairForMove(p.x,p.z,p.level,dir);
-      if(s){ const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
-        p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir};
-        pedMoveDir(p, dw.x-p.x, dw.z-p.z, dt, true); return; }
+    if(p.trip<0){ p.trip=pickStair(p); if(p.trip<0){ wanderStep(p,dt); return; } }
+    const s=stairs[p.trip], dir=(p.level===NF)?-1:1;
+    const fl=fieldAt(p.level, p.trip, p.x, p.z);
+    if(fl && fl.dist>=0 && fl.dist<=1){          // 目的の階段の昇降口に到着→階段に乗る
+      const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
+      p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir,sid:p.trip};
+      pedMoveDir(p, dw.x-p.x, dw.z-p.z, dt, true); return;
     }
     if(fl && fl.step>=0){                         // 経路場に沿って隣のマス中央へ
       const tx=Math.floor(p.x/T), ty=Math.floor(p.z/T), d=DIRS4[fl.step], tw=tileToWorld(tx+d[0],ty+d[1]);
@@ -1349,7 +1368,7 @@ const CONFIG = {
     else { X=NaN; }
     if(!(X===X) || !canStand(X,Z,PED_R,g)){ if(src&&src.length){ const s=src[(Math.random()*src.length)|0]; X=s.x; Z=s.z; } }
     if(!(X===X) || !canStand(X,Z,PED_R,g)){ const pool=pedPool[g]; const t=pool[(Math.random()*pool.length)|0]; const w=tileToWorld(t.x,t.y); X=w.x; Z=w.z; }
-    p.x=X; p.z=Z; p.level=g; p.y=(g-1)*FH; p.ride=null; p.roleT=1+Math.random()*4; setPedRole(p);
+    p.x=X; p.z=Z; p.level=g; p.y=(g-1)*FH; p.ride=null; p.lastStair=-1; p.trip=-1; p.roleT=1+Math.random()*4; setPedRole(p);
   }
   function balancePedestrians(){
     const byF={}; for(let f=1;f<=NF;f++) byF[f]=[];
@@ -1380,7 +1399,8 @@ const CONFIG = {
         const si=stairInfo(p.x,p.z,p.level);
         if(si){ p.y=si.y; p.level=si.t>=0.5?si.lvl+1:si.lvl; }
         else { p.y=(p.level-1)*FH;
-          if(p.ride && p.level===p.ride.goal){ p.ride=null; p.kind="W"; p.goal=0; p.roleT=2+Math.random()*4; } // 目的フロアに到着
+          if(p.ride && p.level===p.ride.goal){ // 目的フロアに到着→直前の階段を記録(=次は別の階段を使う)
+            p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=2.5+Math.random()*4.5; }
         }
       } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
       const base=p.y+FOOT_LIFT;
