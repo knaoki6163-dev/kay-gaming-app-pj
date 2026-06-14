@@ -19,6 +19,9 @@
   #floor { position:fixed; top:8px; left:10px; z-index:8; font-size:15px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 10px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  #timer { position:fixed; top:8px; right:12px; z-index:8; font-size:17px; font-weight:bold;
+    color:#fff; background:rgba(20,30,45,.85); padding:4px 12px; border-radius:6px;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); }
   #map { position:fixed; top:40px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
     background:#fff; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
   #mapLabel { position:fixed; left:12px; z-index:7; font-size:11px; color:#222;
@@ -80,6 +83,9 @@ const CONFIG = {
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 3,   // 地上フロアの歩行者は基準の何倍にするか（地上=225人）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
+  PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
+  PED_RUSH_CHANCE: 0.12,// 方向転換時に急ぎ足になる確率
+  PED_AVOID_R: 1.8,     // この距離まで近づくとプレイヤーを避け始める
 
   STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
   STAIR_LEN: 3,         // 階段の長さ（マス数）
@@ -104,6 +110,7 @@ const CONFIG = {
 
 <div id="app"></div>
 <div id="floor" class="hidden"></div>
+<div id="timer" class="hidden"></div>
 <canvas id="map" class="hidden"></canvas>
 <div id="mapLabel" class="hidden">MAP</div>
 <div id="alert"></div>
@@ -171,9 +178,12 @@ const CONFIG = {
   const mapCtx = mapCv.getContext("2d");
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
+  const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
+  let gameTime = 0;
+  const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.24";
+  const APP_VERSION = "Ver.25";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -619,7 +629,7 @@ const CONFIG = {
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
         const g=makeHuman(clothColors[(pi++)%clothColors.length]); g.position.set(px,(f-1)*FH+FOOT_LIFT,pz);
         worldRoot.add(g);
-        pedestrians.push({group:g,x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0});
+        pedestrians.push({group:g,x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0,rush:0});
       }
     }
   }
@@ -725,6 +735,7 @@ const CONFIG = {
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
+    gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden");
     if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
       mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden");
       mapLabel.style.top=(44+mapCv.height)+"px"; }
@@ -813,14 +824,29 @@ const CONFIG = {
   }
 
   function updatePedestrians(dt){
+    const PA=C.PED_AVOID_R;
     for(const p of pedestrians){
-      p.timer-=dt; if(p.timer<=0){ p.dir=Math.random()*6.28; p.timer=1.5+Math.random()*3; }
-      const nx=Math.cos(p.dir)*C.PED_SPEED*dt, nz=Math.sin(p.dir)*C.PED_SPEED*dt;
+      p.timer-=dt;
+      if(p.timer<=0){
+        p.dir=Math.random()*6.28; p.timer=1.5+Math.random()*3;
+        if(p.rush<=0 && Math.random()<C.PED_RUSH_CHANCE) p.rush=1.2+Math.random()*1.8; // 一時的に急ぎ足
+      }
+      if(p.rush>0) p.rush-=dt;
+      let vx=Math.cos(p.dir), vz=Math.sin(p.dir);
+      // プレイヤーが近づいたら、ぎりぎりで避ける（同じフロアのみ）
+      if(p.level===player.level){
+        const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
+        if(d<PA && d>0.001){ const w=(PA-d)/PA*2.4; vx+=dx/d*w; vz+=dz/d*w; }
+      }
+      const L=Math.hypot(vx,vz); if(L>0){ vx/=L; vz/=L; }
+      const sp = p.rush>0 ? C.PED_RUSH_SPEED : C.PED_SPEED;
+      const nx=vx*sp*dt, nz=vz*sp*dt;
       let moved=false;
       if(canStandPed(p.x+nx,p.z,PED_R,p.level)){ p.x+=nx; moved=true; }
       if(canStandPed(p.x,p.z+nz,PED_R,p.level)){ p.z+=nz; moved=true; }
       if(!moved){ p.dir=Math.random()*6.28; p.timer=0.5; }
-      p.group.position.set(p.x,(p.level-1)*FH+FOOT_LIFT,p.z); p.group.rotation.y=-p.dir+Math.PI/2;
+      p.group.position.set(p.x,(p.level-1)*FH+FOOT_LIFT,p.z);
+      p.group.rotation.y=Math.atan2(vx,vz);
     }
   }
 
@@ -897,6 +923,7 @@ const CONFIG = {
     if(running){
       updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); checkResult();
       drawMinimap();
+      gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.mem>0);
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
