@@ -27,6 +27,10 @@
   #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
     background:#fff; border-radius:50%; opacity:.6; pointer-events:none; }
 
+  /* 敵に追われているときの赤い警告（画面周囲） */
+  #alert { position:fixed; inset:0; z-index:9; pointer-events:none; opacity:0;
+    box-shadow: inset 0 0 150px 55px rgba(225,0,0,0.85); }
+
   .overlay { position:fixed; inset:0; display:flex; flex-direction:column;
     align-items:center; justify-content:center; text-align:center;
     background:rgba(0,0,0,.7); z-index:10; }
@@ -102,6 +106,7 @@ const CONFIG = {
 <div id="floor" class="hidden"></div>
 <canvas id="map" class="hidden"></canvas>
 <div id="mapLabel" class="hidden">MAP</div>
+<div id="alert"></div>
 <div id="cross" class="hidden"></div>
 <div id="hud" class="hidden">
   <div id="goal"></div>
@@ -166,8 +171,9 @@ const CONFIG = {
   const mapCtx = mapCv.getContext("2d");
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
+  const alertEl = document.getElementById("alert");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.23";
+  const APP_VERSION = "Ver.24";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -896,6 +902,9 @@ const CONFIG = {
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
     }
+    // 敵に見つかって追われている間は画面周囲を赤くチカチカ
+    const chased = running && chasers.some(c=>c.mem>0);
+    alertEl.style.opacity = chased ? (0.35 + 0.55*Math.abs(Math.sin(flick*11))) : 0;
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
   }
