@@ -73,7 +73,8 @@ const CONFIG = {
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
 
-  PEDESTRIAN_COUNT: 45, // 歩行者の人数（当たり判定あり。全フロアに分散）
+  PEDESTRIAN_COUNT: 45, // 歩行者の基準人数（各階に均等配分）
+  GROUND_PED_MULT: 3,   // 地上フロアの歩行者は基準の何倍にするか
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
 
   STAIR_COUNT: 3,       // 各フロア間（1↔2, 2↔3...）をつなぐ階段の数
@@ -166,7 +167,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.19";
+  const APP_VERSION = "Ver.20";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -588,18 +589,22 @@ const CONFIG = {
       chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z });
     });
 
-    // 歩行者（各階に分散・各階の迷路上）
+    // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     const poolByFloor={};
     for(let f=1;f<=NF;f++) poolByFloor[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&Math.abs(t.x-1)+Math.abs(t.y-1)<2));
-    for(let i=0;i<C.PEDESTRIAN_COUNT;i++){
-      const lvl=1+((Math.random()*NF)|0);
-      const pool=poolByFloor[lvl]; if(!pool.length) continue;
-      const t=pool[(Math.random()*pool.length)|0];
-      const w=tileToWorld(t.x,t.y);
-      const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-      const g=makeHuman(clothColors[i%clothColors.length]); g.position.set(px,(lvl-1)*FH,pz);
-      worldRoot.add(g);
-      pedestrians.push({group:g,x:px,z:pz,level:lvl,dir:Math.random()*6.28,timer:0});
+    const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
+    let pi=0;
+    for(let f=1;f<=NF;f++){
+      const pool=poolByFloor[f]; if(!pool.length) continue;
+      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : basePer;
+      for(let k=0;k<cnt;k++){
+        const t=pool[(Math.random()*pool.length)|0];
+        const w=tileToWorld(t.x,t.y);
+        const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
+        const g=makeHuman(clothColors[(pi++)%clothColors.length]); g.position.set(px,(f-1)*FH,pz);
+        worldRoot.add(g);
+        pedestrians.push({group:g,x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0});
+      }
     }
   }
 
