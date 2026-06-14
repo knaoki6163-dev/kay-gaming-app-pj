@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.29";
+  const APP_VERSION = "Ver.30";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -410,7 +410,10 @@ const CONFIG = {
   const floorMat=new THREE.MeshLambertMaterial({map:floorTex,color:0xffffff});
   // スラブ(2,3階の床)は専用テクスチャ。floorTex を共有すると repeat が巨大になりチラつくため分離
   const slabTex=makeTileTexture({base:"#dcc6a0",grout:"#b4986a",line:7,div:2,sheen:false}); slabTex.repeat.set(3,3);
-  const slabMat=new THREE.MeshLambertMaterial({map:slabTex,color:0xffffff,side:THREE.DoubleSide});
+  const slabMat=new THREE.MeshLambertMaterial({map:slabTex,color:0xffffff});  // 上面のみ（裏の肌色が下階天井に映らないように）
+  // 下階の天井（各フロアの上に貼る白めグレーの天井）
+  const underCeilTex=makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false});
+  const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide});
   const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
   const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
@@ -434,6 +437,22 @@ const CONFIG = {
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
 
   const wallSegGeo=new THREE.BoxGeometry(T,FH,T);
+
+  // 各フロアの天井（上階スラブの肌色裏面が見えないよう、白めグレーの天井を貼る。階段マスは抜く）
+  function buildFloorCeilings(f){
+    const h=f*FH-0.03, hw=T/2, verts=[], uvs=[];
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+      const c=tileToWorld(x,y), x0=c.x-hw, x1=c.x+hw, z0=c.z-hw, z1=c.z+hw;
+      verts.push(x0,h,z0, x1,h,z0, x1,h,z1,  x0,h,z0, x1,h,z1, x0,h,z1);
+      uvs.push(0,0, 1,0, 1,1,  0,0, 1,1, 0,1);
+    }
+    if(!verts.length) return;
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs,2));
+    worldRoot.add(new THREE.Mesh(geo, underCeilMat));
+  }
 
   // 黄色い誘導線：通路には線を引き、広場は埋めず「出入口どうしを縦横の最短L字」でつなぐ
   function buildYellowLines(f){
@@ -540,6 +559,8 @@ const CONFIG = {
     ceilTex.repeat.set(C.COLS,C.ROWS);
     const ceil=new THREE.Mesh(new THREE.PlaneGeometry(W,D),ceilMat);
     ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*NF+0.04,D/2); worldRoot.add(ceil);
+    // 下の各階（最上階以外）にも白めグレーの天井を貼る
+    for(let f=1;f<NF;f++) buildFloorCeilings(f);
 
     // 各階の天井照明
     for(let f=2;f<=NF;f++){
