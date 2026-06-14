@@ -23,7 +23,7 @@
 
   /* 中央クロスヘア */
   #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
-    background:#222; border-radius:50%; opacity:.5; pointer-events:none; }
+    background:#fff; border-radius:50%; opacity:.6; pointer-events:none; }
 
   /* オーバーレイ */
   .overlay { position:fixed; inset:0; display:flex; flex-direction:column;
@@ -142,8 +142,8 @@ const CONFIG = {
 
   // ---------- Three.js 基本 ----------
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xe7ebf0);
-  if (C.FOG) scene.fog = new THREE.Fog(0xe7ebf0, T*3.5, T*11);
+  scene.background = new THREE.Color(0x12151a);
+  if (C.FOG) scene.fog = new THREE.Fog(0x12151a, T*2, T*8.5);
 
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
   camera.rotation.order = "YXZ";
@@ -159,10 +159,10 @@ const CONFIG = {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // 明るい駅構内らしいライティング
-  scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa0a8, 0.6));
-  const lamp = new THREE.PointLight(0xfffaf0, 0.45, T*6, 2);
+  // 薄暗い駅構内：弱い環境光＋プレイヤーに付く白い照明で手元を照らす
+  scene.add(new THREE.AmbientLight(0x3a4046, 0.5));
+  scene.add(new THREE.HemisphereLight(0x556070, 0x101216, 0.35));
+  const lamp = new THREE.PointLight(0xffffff, 1.4, T*7, 2);
   camera.add(lamp);
   scene.add(camera);
 
@@ -178,16 +178,16 @@ const CONFIG = {
       g.beginPath(); g.moveTo(0,i*step); g.lineTo(s,i*step); g.stroke();
     }
     if(opts.sheen){ // 各タイルに軽いハイライトで陶器っぽさ
-      g.fillStyle="rgba(255,255,255,0.5)";
+      g.fillStyle="rgba(255,255,255,0.16)";
       for(let y=0;y<n;y++)for(let x=0;x<n;x++) g.fillRect(x*step+opts.line, y*step+opts.line, step*0.28, step*0.18);
     }
     const tex=new THREE.CanvasTexture(cv);
     tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.anisotropy=4;
     return tex;
   }
-  const wallTex  = makeTileTexture({ base:"#f6f7f9", grout:"#cfd4da", line:6, div:4, sheen:true });
-  const floorTex = makeTileTexture({ base:"#dfe2e6", grout:"#b7bcc3", line:7, div:2, sheen:false });
-  const ceilTex  = makeTileTexture({ base:"#fbfcfd", grout:"#e3e6ea", line:5, div:3, sheen:false });
+  const wallTex  = makeTileTexture({ base:"#7d848c", grout:"#3e434a", line:6, div:4, sheen:true });
+  const floorTex = makeTileTexture({ base:"#565b61", grout:"#33373c", line:7, div:2, sheen:false });
+  const ceilTex  = makeTileTexture({ base:"#3c4148", grout:"#2a2e33", line:5, div:3, sheen:false });
   wallTex.repeat.set(2,2);
 
   // ---------- 数字テクスチャ（出口の番号：黄色い駅サイン風） ----------
@@ -497,7 +497,7 @@ const CONFIG = {
   let flick=0;
   function updateDeco(dt){
     for(const e of exits){ if(e.group._panel) e.group._panel.lookAt(player.x, 2.2, player.z); }
-    flick += dt; lamp.intensity = 0.45 + Math.sin(flick*9)*0.03;
+    flick += dt; lamp.intensity = 1.4 + Math.sin(flick*9)*0.08;
   }
 
   // ---------- ミニマップ描画 ----------
