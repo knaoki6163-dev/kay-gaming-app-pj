@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.51";
+  const APP_VERSION = "Ver.52";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -585,6 +585,8 @@ const CONFIG = {
   // ---------- ワールド構築 ----------
   const worldRoot=new THREE.Group(); scene.add(worldRoot);
   let exits=[], correctExitNo=1, chasers=[], pedestrians=[];
+  let deptDoors=[], trainDoors=[];      // 各フロアの「人の出入り口」: B1=デパート, B2=電車ドア
+  let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1;
   const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
 
@@ -734,6 +736,7 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function buildDeptEntrances(f){
+    deptDoors=[];
     const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
     const cand=[];
     for(let y=2;y<C.ROWS-2;y++)for(let x=2;x<C.COLS-2;x++){
@@ -751,6 +754,7 @@ const CONFIG = {
       if(placed.some(p=>Math.abs(p.x-c.x)+Math.abs(p.y-c.y)<8)) continue;
       placed.push(c);
       const w=tileToWorld(c.x,c.y);
+      deptDoors.push({x:w.x, z:w.z});   // デパートの人の出入り口（手前の床）
       const fx=w.x+c.dx*(T/2-0.06), fz=w.z+c.dy*(T/2-0.06);  // 壁手前
       const bx=w.x+c.dx*(T/2-0.02), bz=w.z+c.dy*(T/2-0.02);  // 枠は少し奥
       const frame=new THREE.Mesh(new THREE.PlaneGeometry(4.0,3.4), frameMat);
@@ -786,7 +790,7 @@ const CONFIG = {
       const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,FH/2,w.z); worldRoot.add(seg);
     }
     // 電車（窓・ドア付き／一部ドアは開いて乗降客）
-    boarders=[];
+    boarders=[]; trainDoors=[];
     const stripes=[0x2b6fb0,0x3f9d4f,0xd5912a,0xb84040,0x6a55a0,0x888f96];
     const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T, zc=(z0+z1)/2, zlen=(z1-z0)*0.98;
     TRACKS.forEach((l,i)=>{
@@ -808,6 +812,7 @@ const CONFIG = {
         const dark=new THREE.Mesh(new THREE.BoxGeometry(0.1,carH*0.7,T*0.7),new THREE.MeshBasicMaterial({color:0x0a0e12}));
         dark.position.set(doorX, carH*0.4, doorZ); worldRoot.add(dark);                   // 開口
         const platX=(adjX+0.5)*T;
+        trainDoors.push({x:platX, z:doorZ});   // 電車からの人の出入り口（ホーム側）
         for(let k=0;k<2;k++){
           const g=makeHuman(clothColors[(i*3+k)%clothColors.length]);
           worldRoot.add(g);
@@ -945,21 +950,70 @@ const CONFIG = {
     });
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
-    const poolByFloor={};
-    for(let f=1;f<=NF;f++) poolByFloor[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
+    pedPool={};
+    for(let f=1;f<=NF;f++) pedPool[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
     const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
+    pedTargets={};
+    for(let f=1;f<=NF;f++) pedTargets[f]=(f===NF)?basePer*C.GROUND_PED_MULT:(f===1?basePer*C.B2_PED_MULT:basePer*C.B1_PED_MULT);
+    // 各フロアの「人の出入り口」(人数調節に使う): 地上=出口, 地下1階=デパート, 地下2階=電車ドア
+    sourcePts={ [NF]: exits.map(e=>({x:e.sx,z:e.sz})), 2: deptDoors.slice(), 1: trainDoors.slice() };
+    buildFlowFields();   // フロア間移動の経路場（行き止まりに詰まらない誘導）
     let pi=0;
     for(let f=1;f<=NF;f++){
-      const pool=poolByFloor[f]; if(!pool.length) continue;
-      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : (f===1 ? basePer*C.B2_PED_MULT : basePer*C.B1_PED_MULT);
-      for(let k=0;k<cnt;k++){
+      const pool=pedPool[f]; if(!pool.length) continue;
+      for(let k=0;k<pedTargets[f];k++){
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-        pedestrians.push({x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0,rush:0,ci:(pi++)%clothColors.length,ry:0});
+        const p={x:px,z:pz,level:f,y:(f-1)*FH,dir:Math.random()*6.28,timer:Math.random()*3,rush:0,ci:(pi++)%clothColors.length,ry:0,kind:"W",goal:0,ride:null,roleT:Math.random()*8};
+        setPedRole(p);   // 5割は徘徊、5割はフロア間移動
+        pedestrians.push(p);
       }
     }
+    balAccum=0;
     buildPedInstances();   // 大量の歩行者をインスタンス描画で軽量に
+  }
+  // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動（地上→地下1階, それ以外→上の階）
+  function setPedRole(p){
+    if(Math.random()<0.5){ p.kind="M"; p.goal=p.level+(p.level===NF?-1:1); }
+    else { p.kind="W"; p.goal=0; }
+    p.ride=null;
+  }
+  // 経路場(フローフィールド): 各フロア・方向ごとに、最寄りの接続階段へ向かう一歩を持つ
+  function bfsField(f,targets){
+    const dist=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
+    const step=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
+    const q=[];
+    for(const t of targets){ const x=t[0],y=t[1];
+      if(x>=0&&y>=0&&x<C.COLS&&y<C.ROWS&&grids[f][y][x]===0){ dist[y][x]=0; q.push([x,y]); } }
+    let i=0;
+    while(i<q.length){ const [x,y]=q[i++];
+      for(let d=0;d<4;d++){ const nx=x+DIRS4[d][0], ny=y+DIRS4[d][1];
+        if(nx<0||ny<0||nx>=C.COLS||ny>=C.ROWS) continue;
+        if(grids[f][ny][nx]!==0 || stairTileSet.has(nx+","+ny)) continue;  // 壁・階段の上は通さない
+        if(dist[ny][nx]>=0) continue;
+        dist[ny][nx]=dist[y][x]+1; step[ny][nx]=(d^1);  // (nx,ny)から見て(x,y)へ向かう向き
+        q.push([nx,ny]);
+      }
+    }
+    return {dist,step};
+  }
+  function buildFlowFields(){
+    flowFields={};
+    const g3down=[], g2up=[], g1up=[];
+    for(const s of stairs){
+      if(s.lvl===2){ g2up.push(s.entry); g3down.push(s.exit); }
+      else if(s.lvl===1){ g1up.push(s.entry); }
+    }
+    if(NF>=3) flowFields[NF+"_-1"]=bfsField(NF,g3down);   // 地上→地下1階
+    flowFields["2_1"]=bfsField(2,g2up);                   // 地下1階→地上
+    flowFields["1_1"]=bfsField(1,g1up);                   // 地下2階→地下1階
+  }
+  function flowAt(level,dir,x,z){
+    const ff=flowFields[level+"_"+dir]; if(!ff) return null;
+    const tx=Math.floor(x/T), ty=Math.floor(z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return null;
+    return {dist:ff.dist[ty][tx], step:ff.step[ty][tx]};
   }
   // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
   let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
@@ -1060,7 +1114,8 @@ const CONFIG = {
           gate.position.set(gx - c.ox*0.6, topBase+0.65, gz - c.oy*0.6); worldRoot.add(gate);
         }
       }
-      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF, wide, mid});
+      const inner=tileToWorld(c.tx,c.ty);   // 出口の構内側の床（人の出入り口）
+      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, sx:inner.x, sz:inner.z, level:NF, wide, mid});
     });
     // 正解の出口は毎回ランダム（固定シードのRNGではなくMath.randomを使う）
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
@@ -1244,34 +1299,91 @@ const CONFIG = {
     }
   }
 
+  // 1歩動かす（dir=希望方向。allowStair=trueなら階段に乗れる＝徘徊者は乗らない）
+  function pedMoveDir(p, vx, vz, dt, allowStair){
+    let dodge=false;
+    if(!allowStair && p.level===player.level){   // 階段移動中はプレイヤー回避しない（流れを保つ）
+      const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
+      if(d<C.PED_AVOID_R && d>0.001){ const w=(C.PED_AVOID_R-d)/C.PED_AVOID_R*2.0; vx+=dx/d*w; vz+=dz/d*w;
+        if(d<1.1){ vx=dx/d; vz=dz/d; dodge=true; } }
+    }
+    const L=Math.hypot(vx,vz); if(L>0.0001){ vx/=L; vz/=L; }
+    const sp= dodge? C.PED_DODGE_SPEED : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED);
+    const nx=vx*sp*dt, nz=vz*sp*dt, f=p.level;
+    const ok=(X,Z)=> allowStair ? entCanStand(X,Z,PED_R,f)
+                                : (canStandPed(X,Z,PED_R,f) && !(f===1&&obstacleHit(X,Z,0.3)));
+    let moved=false;
+    if(ok(p.x+nx,p.z)){ p.x+=nx; moved=true; }
+    if(ok(p.x,p.z+nz)){ p.z+=nz; moved=true; }
+    if(L>0.0001) p.ry=Math.atan2(vx,vz);
+    return moved;
+  }
+  function wanderStep(p, dt){
+    p.timer-=dt;
+    if(p.timer<=0){ p.dir=Math.random()*6.28; p.timer=1.5+Math.random()*3;
+      if(p.rush<=0 && Math.random()<C.PED_RUSH_CHANCE) p.rush=1.2+Math.random()*1.8; }
+    if(p.rush>0) p.rush-=dt;
+    if(!pedMoveDir(p, Math.cos(p.dir), Math.sin(p.dir), dt, false)){ p.dir=Math.random()*6.28; p.timer=0.5; }
+  }
+  function moverStep(p, dt){
+    if(p.rush>0) p.rush-=dt;
+    if(p.ride){ pedMoveDir(p, p.ride.dx-p.x, p.ride.dz-p.z, dt, true); return; }
+    const dir=(p.level===NF)?-1:1;
+    const fl=flowAt(p.level,dir,p.x,p.z);
+    if(fl && fl.dist>=0 && fl.dist<=1){          // 階段の昇降口に到着→階段に乗る
+      const s=nearestStairForMove(p.x,p.z,p.level,dir);
+      if(s){ const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
+        p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir};
+        pedMoveDir(p, dw.x-p.x, dw.z-p.z, dt, true); return; }
+    }
+    if(fl && fl.step>=0){                         // 経路場に沿って隣のマス中央へ
+      const tx=Math.floor(p.x/T), ty=Math.floor(p.z/T), d=DIRS4[fl.step], tw=tileToWorld(tx+d[0],ty+d[1]);
+      pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false); return;
+    }
+    wanderStep(p, dt);                            // 経路なし→徘徊
+  }
+  // フロアごとの人数を目標値へ。余剰フロアの人を「出入り口」経由で不足フロアの「出入り口」へ移す
+  function relocatePed(p, g){
+    const src=sourcePts[g]; let X,Z;
+    if(src && src.length){ const s=src[(Math.random()*src.length)|0]; X=s.x+(Math.random()-0.5)*T*0.5; Z=s.z+(Math.random()-0.5)*T*0.5; }
+    else { X=NaN; }
+    if(!(X===X) || !canStand(X,Z,PED_R,g)){ if(src&&src.length){ const s=src[(Math.random()*src.length)|0]; X=s.x; Z=s.z; } }
+    if(!(X===X) || !canStand(X,Z,PED_R,g)){ const pool=pedPool[g]; const t=pool[(Math.random()*pool.length)|0]; const w=tileToWorld(t.x,t.y); X=w.x; Z=w.z; }
+    p.x=X; p.z=Z; p.level=g; p.y=(g-1)*FH; p.ride=null; p.roleT=1+Math.random()*4; setPedRole(p);
+  }
+  function balancePedestrians(){
+    const byF={}; for(let f=1;f<=NF;f++) byF[f]=[];
+    for(let i=0;i<pedestrians.length;i++) byF[pedestrians[i].level].push(i);
+    const give=[], take=[];
+    for(let f=1;f<=NF;f++){ const d=byF[f].length-(pedTargets[f]||0); if(d>0) give.push([f,d]); else if(d<0) take.push([f,-d]); }
+    if(!give.length || !take.length) return;
+    for(const gv of give) byF[gv[0]].sort((a,b)=> // 昇順＝最後がプレイヤーから最遠（移しても見えにくい）
+      (Math.hypot(pedestrians[a].x-player.x,pedestrians[a].z-player.z))-(Math.hypot(pedestrians[b].x-player.x,pedestrians[b].z-player.z)));
+    let mv=0; const MAX=80, gi=[0];
+    for(const tk of take){ let need=tk[1];
+      while(need>0 && mv<MAX){
+        while(gi[0]<give.length && give[gi[0]][1]<=0) gi[0]++;
+        if(gi[0]>=give.length) return;
+        const gv=give[gi[0]], arr=byF[gv[0]], idx=arr.pop();
+        if(idx===undefined){ gv[1]=0; continue; }
+        relocatePed(pedestrians[idx], tk[0]); need--; gv[1]--; mv++;
+      }
+    }
+  }
   function updatePedestrians(dt){
-    const PA=C.PED_AVOID_R;
+    balAccum+=dt;
+    if(balAccum>=0.5){ balAccum=0; balancePedestrians(); }
     for(const p of pedestrians){
-      p.timer-=dt;
-      if(p.timer<=0){
-        p.dir=Math.random()*6.28; p.timer=1.5+Math.random()*3;
-        if(p.rush<=0 && Math.random()<C.PED_RUSH_CHANCE) p.rush=1.2+Math.random()*1.8; // 一時的に急ぎ足
-      }
-      if(p.rush>0) p.rush-=dt;
-      let vx=Math.cos(p.dir), vz=Math.sin(p.dir), dodge=false;
-      // プレイヤーが近づいたら、ぎりぎりで避ける（同じフロアのみ）
-      if(p.level===player.level){
-        const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
-        if(d<PA && d>0.001){
-          const w=(PA-d)/PA*2.4; vx+=dx/d*w; vz+=dz/d*w;
-          if(d<1.1){ vx=dx/d; vz=dz/d; dodge=true; p.dir=Math.atan2(vz,vx); } // 接触：真後ろへ素早く退く
+      if(!p.ride){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
+      if(p.kind==="M"){
+        moverStep(p, dt);
+        const si=stairInfo(p.x,p.z,p.level);
+        if(si){ p.y=si.y; p.level=si.t>=0.5?si.lvl+1:si.lvl; }
+        else { p.y=(p.level-1)*FH;
+          if(p.ride && p.level===p.ride.goal){ p.ride=null; p.kind="W"; p.goal=0; p.roleT=2+Math.random()*4; } // 目的フロアに到着
         }
-      }
-      const L=Math.hypot(vx,vz); if(L>0){ vx/=L; vz/=L; }
-      const sp = dodge ? C.PED_DODGE_SPEED : (p.rush>0 ? C.PED_RUSH_SPEED : C.PED_SPEED);
-      const nx=vx*sp*dt, nz=vz*sp*dt;
-      let moved=false;
-      const pf=p.level;
-      if(canStandPed(p.x+nx,p.z,PED_R,pf) && !(pf===1&&obstacleHit(p.x+nx,p.z,0.3))){ p.x+=nx; moved=true; }
-      if(canStandPed(p.x,p.z+nz,PED_R,pf) && !(pf===1&&obstacleHit(p.x,p.z+nz,0.3))){ p.z+=nz; moved=true; }
-      if(!moved){ p.dir=Math.random()*6.28; p.timer=0.5; }
-      p.ry=Math.atan2(vx,vz);
-      const base=(p.level-1)*FH+FOOT_LIFT;
+      } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
+      const base=p.y+FOOT_LIFT;
       _pedDummy.rotation.set(0,p.ry,0);
       _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(p.gi,_pedDummy.matrix);
       _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(p.ti,_pedDummy.matrix);

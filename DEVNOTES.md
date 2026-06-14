@@ -55,10 +55,14 @@
 - `moveToward(ent,tx,tz,...)`: 軸分離移動＋詰まり時の回り込み。`nearestStairForMove`で昇降方向の最寄り階段へ。
 - 捕獲: `checkResult` で同フロア＆`CATCH_DIST`以内。
 
-## 8. 通行人（大量・InstancedMesh）
-- `pedestrians[]`に位置/階/服色等。描画は **InstancedMesh**: 脚`pedLegsInst`・頭`pedHeadInst`(全員共有), 胴は**服色ごと**`pedTorsoInsts[ci]`（r128は`setColorAt`非対応のため色別メッシュ）。`frustumCulled=false`。
-- `updatePedestrians`: ランダム徘徊＋プレイヤー回避(`PED_AVOID_R`)＋接触時の即退避(`PED_DODGE_SPEED`)＋一時的な急ぎ足(`PED_RUSH_*`)。毎フレーム各パートの行列を `setMatrixAt`。
+## 8. 通行人（大量・InstancedMesh＋フロア間移動）
+- `pedestrians[]`に位置/階/服色/`kind`/`ride`等。描画は **InstancedMesh**: 脚`pedLegsInst`・頭`pedHeadInst`(全員共有), 胴は**服色ごと**`pedTorsoInsts[ci]`（r128は`setColorAt`非対応のため色別メッシュ）。`frustumCulled=false`。総数は固定（=各階目標人数の和）。階を移動しても `p.level` を書き換えるだけ（描画高さ`p.y`で追従）なのでインスタンス再生成は不要。
+- **役割(`kind`)**: 5割=徘徊(`'W'`)、5割=フロア間移動(`'M'`)。`setPedRole`で割当、`roleT`で定期再抽選（瞬間比率は約5割で揺らぐ）。移動方向: 地上→地下1階、それ以外→上の階。
+- **フロア間移動**: `buildFlowFields`が各フロア・方向ごとに最寄り接続階段への**経路場(BFSフローフィールド)**を作る（行き止まりに詰まらない）。`moverStep`で経路場に沿って階段口へ→`p.ride`で階段を渡り`stairInfo`で階移行→目的階到着で徘徊に戻る。階段に乗るときだけ`entCanStand`(階段可)、徘徊は`canStandPed`(階段不可)。
+- **人数調節(`balancePedestrians`, 0.5秒毎)**: 各階を目標人数(`pedTargets`)へ。余剰フロアの人を**出入り口(`sourcePts`)経由**で不足フロアの出入り口へ瞬間移送（総数保存）。出入り口: 地上=出口(`exits`), 地下1階=デパート(`deptDoors`), 地下2階=電車ドア(`trainDoors`)。プレイヤーから遠い個体を選んで移送（ポップを見えにくく）。
+- `updatePedestrians`: 徘徊はランダム＋プレイヤー回避(`PED_AVOID_R`)＋即退避(`PED_DODGE_SPEED`)＋急ぎ足(`PED_RUSH_*`)。毎フレーム各パートの行列を `setMatrixAt`。
 - 列車の**乗降客** `boarders` は別管理（少数なのでGroupのまま、ドア前を往復）。
+- ※`stairInfo`は「下階(lvl)が`a0`(低座標)端」前提＝`makeStair/makePlatStair`は必ずentry=低座標/exit=高座標で生成。アルゴリズムは使い捨てNodeシムで検証済（横断発生・各階人数が目標付近で安定・総数保存）。
 
 ## 9. 描画(`buildWorld`)
 - B2: `buildPlatform()`（中央オブジェクトを小物として描画＋当たり円、線路に**窓/ドア付き電車**(`makeTrainSideTex`)＋開いたドアの乗降客、境界壁）。
