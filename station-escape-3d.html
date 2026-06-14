@@ -16,7 +16,10 @@
   #goal { font-size:18px; font-weight:bold; }
   #sub  { font-size:12px; color:#cdd3da; margin-top:2px; }
 
-  #map { position:fixed; top:10px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
+  #floor { position:fixed; top:8px; left:10px; z-index:8; font-size:15px; font-weight:bold;
+    color:#fff; background:rgba(20,30,45,.85); padding:4px 10px; border-radius:6px;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  #map { position:fixed; top:40px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
     background:#fff; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
   #mapLabel { position:fixed; left:12px; z-index:7; font-size:11px; color:#222;
     background:rgba(255,255,255,.85); padding:1px 5px; border-radius:3px; }
@@ -87,6 +90,7 @@ const CONFIG = {
 <!-- ========================================================= -->
 
 <div id="app"></div>
+<div id="floor" class="hidden"></div>
 <canvas id="map" class="hidden"></canvas>
 <div id="mapLabel" class="hidden">MAP</div>
 <div id="cross" class="hidden"></div>
@@ -151,6 +155,7 @@ const CONFIG = {
   const mapCv = document.getElementById("map");
   const mapCtx = mapCv.getContext("2d");
   const mapLabel = document.getElementById("mapLabel");
+  const floorEl = document.getElementById("floor");
   const MAP_CELL = 10;
 
   // ---------- Three.js ----------
@@ -261,6 +266,8 @@ const CONFIG = {
       for(const c of cands){
         if(n>=C.STAIR_COUNT) break;
         if([...c.tiles].some(t=>usedTiles.has(t))) continue;
+        // スタート地点(1,1)付近には階段を置かない（開始直後に階段に乗らないように）
+        if([...c.tiles].some(t=>{const p=t.split(",");return Math.abs(p[0]-1)+Math.abs(p[1]-1)<4;})) continue;
         if(placed.some(p=>Math.abs(p.cxTile-c.cxTile)+Math.abs(p.cyTile-c.cyTile)<3)) continue;
         c.tiles.forEach(t=>{ usedTiles.add(t); stairTileSet.add(t); stairTileLevel[t]=lvl; });
         slabOmit[lvl+1] && c.tiles.forEach(t=>slabOmit[lvl+1].add(t));
@@ -562,9 +569,10 @@ const CONFIG = {
     goalEl.textContent="目標："+correctExitNo+"番出口（"+NF+"階）から脱出せよ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
+    floorEl.classList.remove("hidden");
     if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
       mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden");
-      mapLabel.style.top=(14+mapCv.height)+"px"; }
+      mapLabel.style.top=(44+mapCv.height)+"px"; }
     startScreen.classList.add("hidden"); resultScreen.classList.add("hidden");
     running=true; if(!isTouch) requestLock();
   }
@@ -704,7 +712,8 @@ const CONFIG = {
       updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); checkResult();
       drawMinimap();
       const alert = chasers.some(c=>c.mem>0);
-      subEl.textContent = "現在 "+player.level+"階　/　敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
+      floorEl.textContent = "現在 "+player.level+"階 / "+NF+"階";
+      subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
     }
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
