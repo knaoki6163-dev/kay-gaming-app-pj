@@ -84,6 +84,7 @@ const CONFIG = {
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 15,  // 地上フロアの歩行者は基準の何倍にするか（地上=1125人）
+  GROUND_CEIL_EXTRA: 3, // 地上フロアだけ天井をこの分だけ高くする
   B2_PED_MULT: 10,      // 地下2階の歩行者は基準の何倍にするか（=750人）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
@@ -187,7 +188,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.41";
+  const APP_VERSION = "Ver.42";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -625,8 +626,10 @@ const CONFIG = {
   function obstacleHit(x,z,extra){ for(const o of platObstacles){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; } return false; }
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
+  const plazaMat=new THREE.MeshBasicMaterial({color:0xdad6c8}); plazaMat.fog=false; // 地上の広場(明るい舗装)
 
   const wallSegGeo=new THREE.BoxGeometry(T,FH,T);
+  const wallSegGeoTall=new THREE.BoxGeometry(T,FH+C.GROUND_CEIL_EXTRA,T); // 地上フロア用(天井高め)
 
   // 各フロアの天井（上階スラブの肌色裏面が見えないよう、白めグレーの天井を貼る。階段マスは抜く）
   function buildFloorCeilings(f){
@@ -821,10 +824,11 @@ const CONFIG = {
         }
       }
     }
-    // 最上階の天井
+    // 最上階(地上)の天井は少し高く
+    const GHX=C.GROUND_CEIL_EXTRA, TOPCEIL=FH*NF+GHX;
     ceilTex.repeat.set(C.COLS,C.ROWS);
     const ceil=new THREE.Mesh(new THREE.PlaneGeometry(W,D),ceilMat);
-    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,FH*NF+0.04,D/2); worldRoot.add(ceil);
+    ceil.rotation.x=Math.PI/2; ceil.position.set(W/2,TOPCEIL+0.04,D/2); worldRoot.add(ceil);
     // 下の各階（最上階以外）にも白めグレーの天井を貼る
     for(let f=1;f<NF;f++) buildFloorCeilings(f);
 
@@ -836,7 +840,7 @@ const CONFIG = {
         if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){
           const w=tileToWorld(x,y);
           const pl=new THREE.PointLight(0xfff2d8, 0.5, T*6, 2);
-          pl.position.set(w.x, f*FH-0.5, w.z); worldRoot.add(pl); li++;
+          pl.position.set(w.x, (f===NF?TOPCEIL:f*FH)-0.5, w.z); worldRoot.add(pl); li++;
         }
       }}
     }
@@ -850,8 +854,8 @@ const CONFIG = {
       for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
         if(grids[f][y][x]===1){
           if(f===NF && topSkip.has(x+","+y)) continue;
-          const w=tileToWorld(x,y);
-          const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,(f-1)*FH+FH/2,w.z); worldRoot.add(seg);
+          const w=tileToWorld(x,y), wh=FH+(f===NF?GHX:0);   // 地上は壁も高く
+          const seg=new THREE.Mesh(f===NF?wallSegGeoTall:wallSegGeo,wallMat); seg.position.set(w.x,(f-1)*FH+wh/2,w.z); worldRoot.add(seg);
         }
       }
     }
@@ -887,10 +891,11 @@ const CONFIG = {
     // 各階の天井の蛍光灯＋黄色い誘導線＋壁の看板/ポスター
     const stripMat=new THREE.MeshBasicMaterial({color:0xffffff});
     for(let f=1;f<=NF;f++){
+      const cy=(f===NF?TOPCEIL:f*FH)-0.06;
       allFloorTiles(f).forEach((t,i)=>{ if(i%2) return;
         if(stairTileSet.has(t.x+","+t.y)) return;   // 階段の上にはライトを付けない
         const w=tileToWorld(t.x,t.y);
-        const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,f*FH-0.06,w.z); worldRoot.add(a);
+        const a=new THREE.Mesh(new THREE.BoxGeometry(T*0.6,0.08,T*0.16),stripMat); a.position.set(w.x,cy,w.z); worldRoot.add(a);
       });
       buildYellowLines(f);
       buildPosters(f);
@@ -1011,8 +1016,8 @@ const CONFIG = {
       sign2.position.set(sx, ph2, sz); sign2.lookAt(w.x, ph2, w.z); worldRoot.add(sign2);
       const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-topBase, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
       post.position.set(sx, topBase+(ph2-topBase)/2, sz); worldRoot.add(post);
-      // 外の白い上り階段（広い改札は5マス幅）
-      buildOutsideStairs(mx,mz,c.ox,c.oy,topBase, wide?T*4.6:T*0.85);
+      // 出口の外は地上の広場（フラット。広い改札は幅広）
+      buildOutsidePlaza(mx,mz,c.ox,c.oy,topBase, wide?T*4.6:T*0.85);
       // 改札ゲートの柱（広い出口のみ）
       if(wide){
         const gateMat=new THREE.MeshLambertMaterial({color:0x4a5560});
@@ -1029,17 +1034,17 @@ const CONFIG = {
       ? C.CORRECT_EXIT : (exits.length?exits[(Math.random()*exits.length)|0].no:1);
   }
 
-  function buildOutsideStairs(mx,mz,ox,oy,base,pw){
+  // 出口の外＝地上の広場（フラットに広がる。階段なし）
+  function buildOutsidePlaza(mx,mz,ox,oy,base,pw){
     pw=pw||T*0.85;
-    for(let i=0;i<7;i++){
-      const sx=mx+ox*(0.8+i*1.0), sz=mz+oy*(0.8+i*1.0), sy=base+i*0.5;
-      const geo=ox!==0? new THREE.BoxGeometry(1.0,0.25,pw) : new THREE.BoxGeometry(pw,0.25,1.0);
-      const step=new THREE.Mesh(geo,whiteMat); step.position.set(sx,sy,sz); worldRoot.add(step);
-    }
-    // 明るい空（霧を無視して白く）
-    const skyW=Math.max(T*5,pw+T);
-    const sky=ox!==0? new THREE.BoxGeometry(0.5,T*5,skyW) : new THREE.BoxGeometry(skyW,T*5,0.5);
-    const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*T*5, base+T*1.6, mz+oy*T*5); worldRoot.add(wall);
+    const len=T*12, pwz=pw+T*5;                       // 奥行きと、開口より広く広がる幅
+    const geo=ox!==0? new THREE.PlaneGeometry(len,pwz) : new THREE.PlaneGeometry(pwz,len);
+    const floor=new THREE.Mesh(geo, plazaMat);
+    floor.rotation.x=-Math.PI/2; floor.position.set(mx+ox*len/2, base+0.02, mz+oy*len/2); worldRoot.add(floor);
+    // 明るい空（霧を無視・大きめ）
+    const skyW=Math.max(T*9,pwz+T*2);
+    const sky=ox!==0? new THREE.BoxGeometry(0.5,T*9,skyW) : new THREE.BoxGeometry(skyW,T*9,0.5);
+    const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*(len-T), base+T*3, mz+oy*(len-T)); worldRoot.add(wall);
   }
 
   // ---------- 入力 ----------
