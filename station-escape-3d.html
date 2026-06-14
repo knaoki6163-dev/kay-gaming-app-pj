@@ -73,7 +73,7 @@ const CONFIG = {
   TILE: 5,              // 1マスのワールドサイズ
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
-  CHASER_FLOORS: [1, 2, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上
+  CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
   MOVE_SPEED: 6.0,      // プレイヤーの移動速度（/秒）
   CHASER_SPEED: 3.2,    // 敵が追跡してくる速度
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
@@ -83,7 +83,7 @@ const CONFIG = {
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
-  GROUND_PED_MULT: 3,   // 地上フロアの歩行者は基準の何倍にするか（地上=225人）
+  GROUND_PED_MULT: 15,  // 地上フロアの歩行者は基準の何倍にするか（地上=1125人）
   B2_PED_MULT: 5,       // 地下2階の歩行者は基準の何倍にするか
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
@@ -187,7 +187,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.38";
+  const APP_VERSION = "Ver.39";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -919,11 +919,27 @@ const CONFIG = {
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-        const g=makeHuman(clothColors[(pi++)%clothColors.length]); g.position.set(px,(f-1)*FH+FOOT_LIFT,pz);
-        worldRoot.add(g);
-        pedestrians.push({group:g,x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0,rush:0});
+        pedestrians.push({x:px,z:pz,level:f,dir:Math.random()*6.28,timer:0,rush:0,ci:(pi++)%clothColors.length,ry:0});
       }
     }
+    buildPedInstances();   // 大量の歩行者をインスタンス描画で軽量に
+  }
+  // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
+  let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
+  const _pedDummy=new THREE.Object3D();
+  function buildPedInstances(){
+    const n=pedestrians.length;
+    pedTorsoInsts={};
+    if(!n){ pedLegsInst=pedHeadInst=null; return; }
+    pedLegsInst=new THREE.InstancedMesh(legGeo, legMat, n);
+    pedHeadInst=new THREE.InstancedMesh(headGeo, skinMat, n);
+    pedLegsInst.frustumCulled=false; pedHeadInst.frustumCulled=false;
+    worldRoot.add(pedLegsInst, pedHeadInst);
+    const counts={};
+    pedestrians.forEach((p,i)=>{ p.gi=i; counts[p.ci]=(counts[p.ci]||0)+1; });
+    for(const ci in counts){ const im=new THREE.InstancedMesh(torsoGeo, new THREE.MeshLambertMaterial({color:clothColors[ci]}), counts[ci]); im.frustumCulled=false; pedTorsoInsts[ci]=im; }
+    for(const ci in pedTorsoInsts) worldRoot.add(pedTorsoInsts[ci]);
+    const li={}; pedestrians.forEach(p=>{ p.ti=(li[p.ci]=(li[p.ci]||0)); li[p.ci]++; });
   }
 
   // 指定フロアの、既存湧きから離れた湧き位置（ワールド座標）
@@ -960,46 +976,69 @@ const CONFIG = {
     const chosen=[];
     for(const c of cand){
       if(chosen.length>=C.EXIT_COUNT) break;
-      if(chosen.some(p=>Math.abs(p.tx-c.tx)+Math.abs(p.ty-c.ty)<4)) continue;
+      if(chosen.some(p=>Math.abs(p.tx-c.tx)+Math.abs(p.ty-c.ty)<6)) continue; // 広い改札ぶん間隔を広く
       chosen.push(c);
     }
+    // 番号を外周(時計回り)順に並べる＝1,2,3,..が順に並ぶ
+    const perimIdx=c=> c.oy<0 ? c.tx : (c.ox>0 ? C.COLS+c.ty : (c.oy>0 ? C.COLS+C.ROWS+(C.COLS-c.tx) : 2*C.COLS+C.ROWS+(C.ROWS-c.ty)));
+    chosen.sort((a,b)=>perimIdx(a)-perimIdx(b));
     chosen.forEach((c,idx)=>{
       const no=idx+1;
-      topSkip.add(c.bx+","+c.by);          // 最上段の壁を開口
+      const wide=(no===3||no===5);          // 3番・5番は横幅5倍の改札出口
+      const half=wide?2:0;
+      const perpx=(c.ox===0)?1:0, perpy=(c.oy===0)?1:0;
       const w=tileToWorld(c.tx,c.ty);
-      const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
+      const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;
       const signTex=new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide});
+      for(let k=-half;k<=half;k++){
+        const bx=c.bx+k*perpx, by=c.by+k*perpy;
+        if(bx>=0&&by>=0&&bx<C.COLS&&by<C.ROWS) topSkip.add(bx+","+by); // 壁を開口
+        if(wide){
+          const ix=c.tx+k*perpx, iy=c.ty+k*perpy;
+          if(inInner(ix,iy)&&!stairTileSet.has(ix+","+iy)) grids[NF][iy][ix]=0;
+          const jx=ix-c.ox, jy=iy-c.oy;     // 一つ内側も開けて改札前の広場に
+          if(inInner(jx,jy)&&!stairTileSet.has(jx+","+jy)) grids[NF][jy][jx]=0;
+        }
+      }
       // ① ドアの真上に大きな出口番号サイン（構内側を向く＝必ず見える）
-      const ph1=topBase+FH*0.78;
-      const sign1=new THREE.Mesh(new THREE.PlaneGeometry(T*0.9,T*0.7), signTex);
-      sign1.position.set(mx-c.ox*0.15, ph1, mz-c.oy*0.15);
-      sign1.lookAt(w.x, ph1, w.z);                   // 構内側（プレイヤー）を向く
-      worldRoot.add(sign1);
-      // ② 外へ続く上り階段の左横に、縦長の出口番号サイン＋ポール
-      const leftx=c.oy, leftz=-c.ox;
-      const ph2=topBase+1.7;
-      const sx=mx + c.ox*T*0.45 + leftx*T*0.7, sz=mz + c.oy*T*0.45 + leftz*T*0.7;
+      const ph1=topBase+FH*0.78, sw=wide?T*1.8:T*0.9;
+      const sign1=new THREE.Mesh(new THREE.PlaneGeometry(sw,T*0.7), signTex);
+      sign1.position.set(mx-c.ox*0.15, ph1, mz-c.oy*0.15); sign1.lookAt(w.x, ph1, w.z); worldRoot.add(sign1);
+      // ② 横に縦長サイン＋ポール
+      const leftx=c.oy, leftz=-c.ox, ph2=topBase+1.7, sideOff=wide?T*2.4:T*0.7;
+      const sx=mx + c.ox*T*0.45 + leftx*sideOff, sz=mz + c.oy*T*0.45 + leftz*sideOff;
       const sign2=new THREE.Mesh(new THREE.PlaneGeometry(T*0.34,T*0.7), signTex);
       sign2.position.set(sx, ph2, sz); sign2.lookAt(w.x, ph2, w.z); worldRoot.add(sign2);
       const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-topBase, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
       post.position.set(sx, topBase+(ph2-topBase)/2, sz); worldRoot.add(post);
-      // 外の白い上り階段＋明るい空（最上階の高さから）
-      buildOutsideStairs(mx,mz,c.ox,c.oy,topBase);
-      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF});
+      // 外の白い上り階段（広い改札は5マス幅）
+      buildOutsideStairs(mx,mz,c.ox,c.oy,topBase, wide?T*4.6:T*0.85);
+      // 改札ゲートの柱（広い出口のみ）
+      if(wide){
+        const gateMat=new THREE.MeshLambertMaterial({color:0x4a5560});
+        for(let k=-2;k<=3;k++){
+          const gx=mx+perpx*(k-0.5)*T, gz=mz+perpy*(k-0.5)*T;
+          const gate=new THREE.Mesh(new THREE.BoxGeometry(0.45,1.3,0.9), gateMat);
+          gate.position.set(gx - c.ox*0.6, topBase+0.65, gz - c.oy*0.6); worldRoot.add(gate);
+        }
+      }
+      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF, wide});
     });
     // 正解の出口は毎回ランダム（固定シードのRNGではなくMath.randomを使う）
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
       ? C.CORRECT_EXIT : (exits.length?exits[(Math.random()*exits.length)|0].no:1);
   }
 
-  function buildOutsideStairs(mx,mz,ox,oy,base){
+  function buildOutsideStairs(mx,mz,ox,oy,base,pw){
+    pw=pw||T*0.85;
     for(let i=0;i<7;i++){
       const sx=mx+ox*(0.8+i*1.0), sz=mz+oy*(0.8+i*1.0), sy=base+i*0.5;
-      const geo=ox!==0? new THREE.BoxGeometry(1.0,0.25,T*0.85) : new THREE.BoxGeometry(T*0.85,0.25,1.0);
+      const geo=ox!==0? new THREE.BoxGeometry(1.0,0.25,pw) : new THREE.BoxGeometry(pw,0.25,1.0);
       const step=new THREE.Mesh(geo,whiteMat); step.position.set(sx,sy,sz); worldRoot.add(step);
     }
     // 明るい空（霧を無視して白く）
-    const sky=ox!==0? new THREE.BoxGeometry(0.5,T*5,T*5) : new THREE.BoxGeometry(T*5,T*5,0.5);
+    const skyW=Math.max(T*5,pw+T);
+    const sky=ox!==0? new THREE.BoxGeometry(0.5,T*5,skyW) : new THREE.BoxGeometry(skyW,T*5,0.5);
     const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*T*5, base+T*1.6, mz+oy*T*5); worldRoot.add(wall);
   }
 
@@ -1171,9 +1210,15 @@ const CONFIG = {
       if(canStandPed(p.x+nx,p.z,PED_R,pf) && !(pf===1&&obstacleHit(p.x+nx,p.z,0.3))){ p.x+=nx; moved=true; }
       if(canStandPed(p.x,p.z+nz,PED_R,pf) && !(pf===1&&obstacleHit(p.x,p.z+nz,0.3))){ p.z+=nz; moved=true; }
       if(!moved){ p.dir=Math.random()*6.28; p.timer=0.5; }
-      p.group.position.set(p.x,(p.level-1)*FH+FOOT_LIFT,p.z);
-      p.group.rotation.y=Math.atan2(vx,vz);
+      p.ry=Math.atan2(vx,vz);
+      const base=(p.level-1)*FH+FOOT_LIFT;
+      _pedDummy.rotation.set(0,p.ry,0);
+      _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(p.gi,_pedDummy.matrix);
+      _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(p.ti,_pedDummy.matrix);
+      _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(p.gi,_pedDummy.matrix);
     }
+    if(pedLegsInst){ pedLegsInst.instanceMatrix.needsUpdate=true; pedHeadInst.instanceMatrix.needsUpdate=true;
+      for(const ci in pedTorsoInsts) pedTorsoInsts[ci].instanceMatrix.needsUpdate=true; }
   }
 
   function checkResult(){
@@ -1181,7 +1226,7 @@ const CONFIG = {
       if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
     }
     if(player.level===NF){
-      for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<T*0.6 && e.no===correctExitNo){ endGame(true); return; } }
+      for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<(e.wide?T*2.6:T*0.6) && e.no===correctExitNo){ endGame(true); return; } }
     }
   }
   let flick=0;
