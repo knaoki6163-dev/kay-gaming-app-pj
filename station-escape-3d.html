@@ -23,7 +23,10 @@
   #timer { position:fixed; top:8px; right:12px; z-index:8; font-size:17px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 12px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
-  #map { position:fixed; top:40px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
+  #mapToggle { position:fixed; top:38px; left:10px; z-index:8; font-size:13px; font-weight:bold;
+    color:#fff; background:rgba(20,30,45,.85); padding:3px 9px; border-radius:6px; cursor:pointer;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); user-select:none; }
+  #map { position:fixed; top:62px; left:10px; z-index:6; border:2px solid rgba(0,0,0,.4);
     background:#fff; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
   #mapLabel { position:fixed; left:12px; z-index:7; font-size:11px; color:#222;
     background:rgba(255,255,255,.85); padding:1px 5px; border-radius:3px; }
@@ -115,6 +118,7 @@ const CONFIG = {
 
 <div id="app"></div>
 <div id="floor" class="hidden"></div>
+<div id="mapToggle" class="hidden">🗺 たたむ（M）</div>
 <div id="timer" class="hidden"></div>
 <canvas id="map" class="hidden"></canvas>
 <div id="mapLabel" class="hidden">MAP</div>
@@ -182,13 +186,22 @@ const CONFIG = {
   const mapCv = document.getElementById("map");
   const mapCtx = mapCv.getContext("2d");
   const mapLabel = document.getElementById("mapLabel");
+  const mapToggle = document.getElementById("mapToggle");
+  let mapCollapsed = false;
+  function setMapCollapsed(c){
+    mapCollapsed=c;
+    mapCv.style.display = c?"none":"";
+    mapLabel.style.display = c?"none":"";
+    mapToggle.textContent = c?"🗺 マップを開く（M）":"🗺 たたむ（M）";
+  }
+  mapToggle.addEventListener("click", e=>{ e.stopPropagation(); setMapCollapsed(!mapCollapsed); });
   const floorEl = document.getElementById("floor");
   const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.43";
+  const APP_VERSION = "Ver.44";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -1053,6 +1066,7 @@ const CONFIG = {
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
   const keys={}; let running=false, locked=false;
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
+    if(k==="m") setMapCollapsed(!mapCollapsed);   // Mでマップ開閉
     if(["arrowup","arrowdown","arrowleft","arrowright"].includes(k))e.preventDefault();});
   addEventListener("keyup",e=>{keys[e.key.toLowerCase()]=false;});
 
@@ -1103,8 +1117,8 @@ const CONFIG = {
     floorEl.classList.remove("hidden");
     gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden");
     if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
-      mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden");
-      mapLabel.style.top=(44+mapCv.height)+"px"; }
+      mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden"); mapToggle.classList.remove("hidden");
+      mapLabel.style.top=(66+mapCv.height)+"px"; setMapCollapsed(mapCollapsed); }
     startScreen.classList.add("hidden"); resultScreen.classList.add("hidden");
     running=true; if(!isTouch) requestLock();
   }
@@ -1257,7 +1271,7 @@ const CONFIG = {
 
   // ---------- ミニマップ（現在フロアを表示。階を上がると切り替わる） ----------
   function drawMinimap(){
-    if(!C.SHOW_MAP) return; const cs=MAP_CELL;
+    if(!C.SHOW_MAP || mapCollapsed) return; const cs=MAP_CELL;
     const F=player.level, g=grids[F];
     mapCtx.clearRect(0,0,mapCv.width,mapCv.height);
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
