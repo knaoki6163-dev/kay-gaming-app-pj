@@ -86,8 +86,9 @@ const CONFIG = {
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
-  GROUND_PED_MULT: 15,  // 地上フロアの歩行者は基準の何倍にするか（地上=1125人）
+  GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
   GROUND_CEIL_EXTRA: 3, // 地上フロアだけ天井をこの分だけ高くする
+  B1_PED_MULT: 3,       // 地下1階の歩行者は基準の何倍にするか（=225人）
   B2_PED_MULT: 10,      // 地下2階の歩行者は基準の何倍にするか（=750人）
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
@@ -201,7 +202,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.44";
+  const APP_VERSION = "Ver.45";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -934,7 +935,7 @@ const CONFIG = {
     let pi=0;
     for(let f=1;f<=NF;f++){
       const pool=poolByFloor[f]; if(!pool.length) continue;
-      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : (f===1 ? basePer*C.B2_PED_MULT : basePer);
+      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : (f===1 ? basePer*C.B2_PED_MULT : basePer*C.B1_PED_MULT);
       for(let k=0;k<cnt;k++){
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
