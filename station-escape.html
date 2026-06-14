@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>駅の出口探索ゲーム</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #1a1a1a;
+    color: #eee;
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #title {
+    font-size: 18px;
+    margin: 8px 0;
+    font-weight: bold;
+  }
+  #info {
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 6px;
+  }
+  #wrap {
+    position: relative;
+    display: inline-block;
+  }
+  canvas {
+    background: #2b2b2b;
+    border: 2px solid #444;
+    max-width: 100%;
+    height: auto;
+    touch-action: none;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    background: rgba(0,0,0,0.65);
+    font-size: 40px;
+    font-weight: bold;
+  }
+  #overlay.show { display: flex; }
+  #overlay button {
+    margin-top: 16px;
+    font-size: 16px;
+    padding: 8px 20px;
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    background: #4a90e2;
+    color: #fff;
+  }
+  .clear { color: #5fd36a; }
+  .over  { color: #e25555; }
+</style>
+</head>
+<body>
+
+<!-- ===== 難易度・設定（ここを変えれば簡単に調整できます） ===== -->
+<script>
+const CONFIG = {
+  // 迷路の広さ（マス数）。大きいほど広くなる
+  COLS: 15,
+  ROWS: 11,
+  TILE: 40,            // 1マスのピクセルサイズ
+
+  PLAYER_SPEED: 2.6,   // プレイヤーの移動速度（px/フレーム）
+  CHASER_SPEED: 1.9,   // 追跡者の速度。PLAYER_SPEEDより小さいと逃げやすい
+  CATCH_DIST: 18,      // この距離まで近づくと捕まる（px）
+
+  EXIT_COUNT: 4,       // 出口の数（正しい出口は1つ）
+};
+</script>
+<!-- ============================================================ -->
+
+<div id="title">読み込み中...</div>
+<div id="info">矢印キー / WASD で移動。スマホは画面ドラッグで移動。</div>
+
+<div id="wrap">
+  <canvas id="game"></canvas>
+  <div id="overlay">
+    <div id="overlayText"></div>
+    <button id="restart">もう一度</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const titleEl = document.getElementById("title");
+  const overlay = document.getElementById("overlay");
+  const overlayText = document.getElementById("overlayText");
+  const restartBtn = document.getElementById("restart");
+
+  const C = CONFIG;
+  canvas.width = C.COLS * C.TILE;
+  canvas.height = C.ROWS * C.TILE;
+
+  // ----- 迷路の生成（穴掘り法で必ず連結な迷路を作る） -----
+  // grid[y][x] === 1 が壁、0 が通路
+  let grid = [];
+
+  function generateMaze() {
+    // まず全部壁にする
+    grid = [];
+    for (let y = 0; y < C.ROWS; y++) {
+      grid.push(new Array(C.COLS).fill(1));
+    }
+    // 穴掘り（depth-first）。奇数座標を部屋として扱う
+    function carve(cx, cy) {
+      grid[cy][cx] = 0;
+      const dirs = shuffle([[0,-2],[0,2],[-2,0],[2,0]]);
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx, ny = cy + dy;
+        if (ny > 0 && ny < C.ROWS - 1 && nx > 0 && nx < C.COLS - 1 && grid[ny][nx] === 1) {
+          grid[cy + dy/2][cx + dx/2] = 0; // 間の壁を壊す
+          carve(nx, ny);
+        }
+      }
+    }
+    carve(1, 1);
+  }
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // タイル座標が通路かどうか
+  function isFloor(tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= C.COLS || ty >= C.ROWS) return false;
+    return grid[ty][tx] === 0;
+  }
+
+  // 円（中心x,y / 半径r）が壁にぶつからない位置か判定
+  function canMove(x, y, r) {
+    // 円の四隅をチェック
+    const pts = [
+      [x - r, y - r], [x + r, y - r],
+      [x - r, y + r], [x + r, y + r],
+    ];
+    for (const [px, py] of pts) {
+      const tx = Math.floor(px / C.TILE);
+      const ty = Math.floor(py / C.TILE);
+      if (!isFloor(tx, ty)) return false;
+    }
+    return true;
+  }
+
+  // タイル中心のピクセル座標
+  function tileCenter(tx, ty) {
+    return { x: tx * C.TILE + C.TILE / 2, y: ty * C.TILE + C.TILE / 2 };
+  }
+
+  // 通路マスを全部集める
+  function allFloorTiles() {
+    const list = [];
+    for (let y = 0; y < C.ROWS; y++)
+      for (let x = 0; x < C.COLS; x++)
+        if (grid[y][x] === 0) list.push({ x, y });
+    return list;
+  }
+
+  // ----- ゲーム状態 -----
+  let player, chaser, exits, correctExitNo, state;
+  const PLAYER_R = C.TILE * 0.3;
+  const CHASER_R = C.TILE * 0.3;
+
+  function dist(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function setup() {
+    generateMaze();
+
+    const floors = allFloorTiles();
+
+    // プレイヤーは左上スタート（1,1）
+    const ps = tileCenter(1, 1);
+    player = { x: ps.x, y: ps.y, r: PLAYER_R };
+
+    // 出口を配置（プレイヤーから遠い通路マスから選ぶ）
+    const sorted = floors.slice().sort((a, b) => {
+      const ca = tileCenter(a.x, a.y), cb = tileCenter(b.x, b.y);
+      return dist(cb, player) - dist(ca, player);
+    });
+    const exitCount = Math.min(C.EXIT_COUNT, Math.floor(sorted.length / 2));
+    exits = [];
+    const used = new Set();
+    for (const t of sorted) {
+      if (exits.length >= exitCount) break;
+      // 出口同士が近すぎないように間引く
+      const tooClose = exits.some(e => Math.abs(e.tx - t.x) + Math.abs(e.ty - t.y) < 3);
+      if (tooClose) continue;
+      const c = tileCenter(t.x, t.y);
+      exits.push({ tx: t.x, ty: t.y, x: c.x, y: c.y, no: exits.length + 1 });
+      used.add(t.x + "," + t.y);
+    }
+
+    // 正しい出口をランダムに決定
+    correctExitNo = exits[Math.floor(Math.random() * exits.length)].no;
+
+    // 追跡者はプレイヤーから遠い通路に配置（出口とは別マス）
+    let chaserTile = null;
+    for (const t of sorted) {
+      if (used.has(t.x + "," + t.y)) continue;
+      chaserTile = t; break;
+    }
+    if (!chaserTile) chaserTile = sorted[0];
+    const cc = tileCenter(chaserTile.x, chaserTile.y);
+    chaser = { x: cc.x, y: cc.y, r: CHASER_R };
+
+    state = "play";
+    overlay.classList.remove("show");
+    titleEl.textContent = "目標：" + correctExitNo + "番出口へ脱出せよ！";
+  }
+
+  // ----- 入力 -----
+  const keys = {};
+  window.addEventListener("keydown", e => {
+    const k = e.key.toLowerCase();
+    if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault();
+    keys[k] = true;
+  });
+  window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+  // タッチ／ドラッグ移動：触っている方向へ進む
+  let touchTarget = null;
+  function setTouchFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    touchTarget = {
+      x: (t.clientX - rect.left) * scaleX,
+      y: (t.clientY - rect.top) * scaleY,
+    };
+  }
+  canvas.addEventListener("touchstart", e => { e.preventDefault(); setTouchFromEvent(e); }, { passive: false });
+  canvas.addEventListener("touchmove",  e => { e.preventDefault(); setTouchFromEvent(e); }, { passive: false });
+  canvas.addEventListener("touchend",   e => { e.preventDefault(); touchTarget = null; }, { passive: false });
+  canvas.addEventListener("mousedown", e => { setTouchFromEvent(e); });
+  canvas.addEventListener("mousemove", e => { if (e.buttons) setTouchFromEvent(e); });
+  window.addEventListener("mouseup", () => { touchTarget = null; });
+
+  // ----- 移動処理（軸ごとに分けて壁すべりできるように） -----
+  function moveEntity(ent, dx, dy) {
+    if (dx !== 0 && canMove(ent.x + dx, ent.y, ent.r)) ent.x += dx;
+    if (dy !== 0 && canMove(ent.x, ent.y + dy, ent.r)) ent.y += dy;
+  }
+
+  function updatePlayer() {
+    let dx = 0, dy = 0;
+    if (keys["arrowleft"] || keys["a"]) dx -= 1;
+    if (keys["arrowright"] || keys["d"]) dx += 1;
+    if (keys["arrowup"] || keys["w"]) dy -= 1;
+    if (keys["arrowdown"] || keys["s"]) dy += 1;
+
+    // タッチ操作：目標方向へ向かう
+    if (touchTarget) {
+      const tdx = touchTarget.x - player.x;
+      const tdy = touchTarget.y - player.y;
+      if (Math.hypot(tdx, tdy) > 4) { dx = tdx; dy = tdy; }
+    }
+
+    const len = Math.hypot(dx, dy);
+    if (len > 0) {
+      dx = dx / len * C.PLAYER_SPEED;
+      dy = dy / len * C.PLAYER_SPEED;
+      moveEntity(player, dx, dy);
+    }
+  }
+
+  function updateChaser() {
+    // プレイヤーへ素直に向かう（軸ごとに動くので壁角で引っかかりにくい）
+    let dx = player.x - chaser.x;
+    let dy = player.y - chaser.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 0.001) {
+      dx = dx / len * C.CHASER_SPEED;
+      dy = dy / len * C.CHASER_SPEED;
+
+      const beforeX = chaser.x, beforeY = chaser.y;
+      moveEntity(chaser, dx, dy);
+
+      // 壁で完全に詰まったら、空いている軸方向へ少しずらして回り込む
+      if (chaser.x === beforeX && chaser.y === beforeY) {
+        if (canMove(chaser.x + dx, chaser.y, chaser.r)) chaser.x += dx;
+        else if (canMove(chaser.x, chaser.y + dy, chaser.r)) chaser.y += dy;
+        else {
+          // 縦横どちらかへ強制的に1歩
+          const altX = dx !== 0 ? 0 : C.CHASER_SPEED * (Math.random() < 0.5 ? 1 : -1);
+          const altY = dy !== 0 ? 0 : C.CHASER_SPEED * (Math.random() < 0.5 ? 1 : -1);
+          if (canMove(chaser.x + altX, chaser.y + altY, chaser.r)) {
+            chaser.x += altX; chaser.y += altY;
+          }
+        }
+      }
+    }
+  }
+
+  function checkResult() {
+    // 捕まり判定
+    if (dist(player, chaser) < C.CATCH_DIST) {
+      endGame(false);
+      return;
+    }
+    // 出口判定
+    for (const e of exits) {
+      if (dist(player, e) < C.TILE * 0.4) {
+        if (e.no === correctExitNo) endGame(true);
+        else {
+          // 間違った出口は通れない（軽く押し戻す）。メッセージは出さずシンプルに。
+        }
+      }
+    }
+  }
+
+  function endGame(cleared) {
+    state = cleared ? "clear" : "over";
+    overlayText.textContent = cleared ? "CLEAR!" : "GAME OVER";
+    overlayText.className = cleared ? "clear" : "over";
+    overlay.classList.add("show");
+  }
+
+  // ----- 描画 -----
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 壁
+    ctx.strokeStyle = "#666";
+    ctx.lineWidth = 2;
+    for (let y = 0; y < C.ROWS; y++) {
+      for (let x = 0; x < C.COLS; x++) {
+        if (grid[y][x] === 1) {
+          ctx.fillStyle = "#3a3a3a";
+          ctx.fillRect(x * C.TILE, y * C.TILE, C.TILE, C.TILE);
+          ctx.strokeRect(x * C.TILE, y * C.TILE, C.TILE, C.TILE);
+        }
+      }
+    }
+
+    // 出口（番号付き四角）
+    for (const e of exits) {
+      const isCorrect = e.no === correctExitNo;
+      ctx.fillStyle = "#3ba85a";  // 見た目ではどれが正解か分からないよう全部同色
+      ctx.fillRect(e.x - C.TILE * 0.35, e.y - C.TILE * 0.35, C.TILE * 0.7, C.TILE * 0.7);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold " + Math.floor(C.TILE * 0.45) + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(e.no, e.x, e.y);
+    }
+
+    // 追跡者（赤丸）
+    drawCircle(chaser.x, chaser.y, chaser.r, "#e25555");
+    // 「!」マーク
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold " + Math.floor(C.TILE * 0.4) + "px sans-serif";
+    ctx.fillText("!", chaser.x, chaser.y);
+
+    // プレイヤー（青丸）
+    drawCircle(player.x, player.y, player.r, "#4a90e2");
+  }
+
+  function drawCircle(x, y, r, color) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // ----- メインループ -----
+  function loop() {
+    if (state === "play") {
+      updatePlayer();
+      updateChaser();
+      checkResult();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  restartBtn.addEventListener("click", setup);
+
+  setup();
+  loop();
+})();
+</script>
+</body>
+</html>
