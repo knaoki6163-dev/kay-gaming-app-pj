@@ -184,7 +184,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.27";
+  const APP_VERSION = "Ver.28";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -670,12 +670,19 @@ const CONFIG = {
       topSkip.add(c.bx+","+c.by);          // 最上段の壁を開口
       const w=tileToWorld(c.tx,c.ty);
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;   // ドア（外周壁面）位置
-      const ph=topBase+2.0;
-      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.6,T*0.6),
+      // 小さな出口看板を、外へ続く上り階段の横に立てる
+      const perpx=c.oy, perpz=c.ox;                  // 外向きと直交する横方向
+      const ph=topBase+1.7;
+      const sx=mx + c.ox*T*0.35 + perpx*T*0.6, sz=mz + c.oy*T*0.35 + perpz*T*0.6;
+      const panel=new THREE.Mesh(new THREE.PlaneGeometry(T*0.32,T*0.32),
         new THREE.MeshBasicMaterial({map:exitSignTexture(no),side:THREE.DoubleSide}));
-      panel.position.set(mx-c.ox*0.2, ph, mz-c.oy*0.2);
-      panel.lookAt(w.x, ph, w.z);
+      panel.position.set(sx, ph, sz);
+      panel.lookAt(w.x, ph, w.z);                    // 構内側（プレイヤー側）を向く
       worldRoot.add(panel);
+      // 看板を支える細いポール
+      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph-topBase, 0.1),
+        new THREE.MeshLambertMaterial({color:0x8b9197}));
+      post.position.set(sx, topBase+(ph-topBase)/2, sz); worldRoot.add(post);
       // 外の白い上り階段＋明るい空（最上階の高さから）
       buildOutsideStairs(mx,mz,c.ox,c.oy,topBase);
       exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, level:NF});
