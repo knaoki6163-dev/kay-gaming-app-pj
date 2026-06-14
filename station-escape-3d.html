@@ -59,7 +59,7 @@
 <!-- ====== 難易度・設定（ここを変えれば簡単に調整できます） ====== -->
 <script>
 const CONFIG = {
-  SEED: 221,            // 迷路の固定シード（全フロア連結・上がった先は通路・到達可能を検証済み）
+  SEED: 126,            // 迷路の固定シード（開放的・全フロア連結・到達可能を検証済み）
   NUM_FLOORS: 3,        // フロア数（3階建て）
   COLS: 27, ROWS: 21,   // 迷路の広さ（マス数。奇数推奨。各フロア独立・面積約2倍）
   TILE: 5,              // 1マスのワールドサイズ
@@ -85,9 +85,8 @@ const CONFIG = {
   INVERT_LOOK_Y: true,  // 視点の上下反転
   EYE_HEIGHT: 1.6,      // 視点の高さ
 
-  LOOP_PROB: 0.10,      // 回り道を作る確率
-  PLAZA_COUNTS: {1:7, 2:4, 3:7}, // 各フロアの広場の数（地下2階/地下1階/地上）
-  PLAZA_SIZE: 3,        // 広場の一辺
+  LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
+  PLAZA_COUNTS: {1:8, 2:6, 3:8}, // 各フロアの広場の数（地下2階/地下1階/地上）
 
   EXIT_COUNT: 5,        // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
@@ -167,7 +166,7 @@ const CONFIG = {
   const mapLabel = document.getElementById("mapLabel");
   const floorEl = document.getElementById("floor");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "ver. 2026.06.14 (#14)";
+  const APP_VERSION = "ver. 2026.06.14 (#15)";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -252,9 +251,10 @@ const CONFIG = {
     }
     const pc=C.PLAZA_COUNTS[floor]||3;
     for(let i=0;i<pc;i++){
-      const sz=C.PLAZA_SIZE;
-      const rx=1+((RNG()*(C.COLS-1-sz))|0), ry=1+((RNG()*(C.ROWS-1-sz))|0);
-      for(let y=ry;y<ry+sz;y++)for(let x=rx;x<rx+sz;x++) g[y][x]=0;
+      // 広場は大きさランダム(3〜6マス)で駅構内らしい開放感を出す
+      const rw=3+((RNG()*4)|0), rh=3+((RNG()*4)|0);
+      const rx=1+((RNG()*(C.COLS-1-rw))|0), ry=1+((RNG()*(C.ROWS-1-rh))|0);
+      for(let y=ry;y<ry+rh;y++)for(let x=rx;x<rx+rw;x++) g[y][x]=0;
     }
     return g;
   }
@@ -745,27 +745,29 @@ const CONFIG = {
     mapCtx.moveTo(px,py); mapCtx.lineTo(px+fwd.x*cs*1.2,py+fwd.z*cs*1.2); mapCtx.stroke();
     mapCtx.fillStyle="#1f6dd0"; mapCtx.beginPath(); mapCtx.arc(px,py,cs*0.4,0,6.28); mapCtx.fill();
 
-    // 階段の向き矢印（最前面に。上り=赤で上る向き／下り=青で下る向き。白フチで見やすく）
-    const arrow=(cx,cy,dx,dy,color)=>{
-      const L=cs*2.6, hl=cs*1.5, a=Math.atan2(dy,dx);
-      const hx=cx+dx*L*0.5, hy=cy+dy*L*0.5, tx=cx-dx*L*0.5, ty=cy-dy*L*0.5;
-      const head=(w)=>{ mapCtx.beginPath(); mapCtx.moveTo(hx,hy);
-        mapCtx.lineTo(hx-Math.cos(a-0.5)*hl, hy-Math.sin(a-0.5)*hl);
-        mapCtx.lineTo(hx-Math.cos(a+0.5)*hl, hy-Math.sin(a+0.5)*hl);
-        mapCtx.closePath(); };
+    // 階段の向き矢印（最前面・大きく。上り=赤で上る向き／下り=青で下る向き。白フチ付き）
+    const tri=(tx,ty,a,hl,hw)=>{ const bx=tx-Math.cos(a)*hl, by=ty-Math.sin(a)*hl, nx=-Math.sin(a), ny=Math.cos(a);
+      mapCtx.beginPath(); mapCtx.moveTo(tx,ty); mapCtx.lineTo(bx+nx*hw,by+ny*hw); mapCtx.lineTo(bx-nx*hw,by-ny*hw); mapCtx.closePath(); };
+    const drawArrow=(x1,y1,x2,y2,color)=>{
+      const a=Math.atan2(y2-y1,x2-x1), hl=cs*1.7, hw=cs*1.1;
+      const bx=x2-Math.cos(a)*hl, by=y2-Math.sin(a)*hl;
+      mapCtx.lineCap="round";
       // 白フチ
-      mapCtx.strokeStyle="#ffffff"; mapCtx.lineWidth=6; mapCtx.lineCap="round";
-      mapCtx.beginPath(); mapCtx.moveTo(tx,ty); mapCtx.lineTo(hx,hy); mapCtx.stroke();
-      mapCtx.fillStyle="#ffffff"; head(); mapCtx.fill(); mapCtx.stroke();
+      mapCtx.strokeStyle="#fff"; mapCtx.lineWidth=8;
+      mapCtx.beginPath(); mapCtx.moveTo(x1,y1); mapCtx.lineTo(bx,by); mapCtx.stroke();
+      mapCtx.fillStyle="#fff"; tri(x2,y2,a,hl+2,hw+2); mapCtx.fill();
       // 本体
-      mapCtx.strokeStyle=color; mapCtx.lineWidth=3.5;
-      mapCtx.beginPath(); mapCtx.moveTo(tx,ty); mapCtx.lineTo(hx,hy); mapCtx.stroke();
-      mapCtx.fillStyle=color; head(); mapCtx.fill();
+      mapCtx.strokeStyle=color; mapCtx.lineWidth=4.5;
+      mapCtx.beginPath(); mapCtx.moveTo(x1,y1); mapCtx.lineTo(bx,by); mapCtx.stroke();
+      mapCtx.fillStyle=color; tri(x2,y2,a,hl,hw); mapCtx.fill();
     };
     for(const s of stairs){
-      const cx=s.cxTile*cs, cy=s.cyTile*cs;
-      if(s.lvl===F)        arrow(cx,cy, s.adir[0], s.adir[1], "#e0241a");   // 上り（赤）
-      else if(s.lvl===F-1) arrow(cx,cy,-s.adir[0],-s.adir[1], "#2566d6");   // 下り（青）
+      const up=s.lvl===F, down=s.lvl===F-1; if(!up&&!down) continue;
+      const dir=up?1:-1, half=C.STAIR_LEN/2+0.7;
+      const adx=s.adir[0]*dir, ady=s.adir[1]*dir;
+      const x1=(s.cxTile-adx*half)*cs, y1=(s.cyTile-ady*half)*cs;
+      const x2=(s.cxTile+adx*half)*cs, y2=(s.cyTile+ady*half)*cs;
+      drawArrow(x1,y1,x2,y2, up?"#e0241a":"#2566d6");
     }
   }
 
