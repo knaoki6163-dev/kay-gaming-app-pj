@@ -109,7 +109,7 @@ const CONFIG = {
   LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
   PLAZA_COUNTS: {1:0, 2:16, 3:14}, // 各フロアの広場の数（地下2階はプラットホームなので未使用）
 
-  EXIT_COUNT: 10,       // 出口の数（すべて最上階。1つが正解）
+  EXIT_COUNT: 14,       // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
 
   SHOW_MAP: true,       // 左上のテスト用マップ
@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.53";
+  const APP_VERSION = "Ver.54";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -229,9 +229,10 @@ const CONFIG = {
     renderer.setSize(innerWidth, innerHeight);
   });
 
-  scene.add(new THREE.AmbientLight(0x6a727b, 0.9));
-  scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.55));
-  const lamp = new THREE.PointLight(0xffffff, 0.7, T*7, 2);  // 一定光（床/天井の発光・脈動を防ぐ）
+  // 全体光は床が白飛び(発光)しないよう余裕を持たせた値に抑える（明るさは無影の天井・出口の空で確保）
+  scene.add(new THREE.AmbientLight(0x6a727b, 0.6));
+  scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.4));
+  const lamp = new THREE.PointLight(0xffffff, 0.5, T*7, 2);  // プレイヤー追従の一定光（脈動・床の発光を防ぐ）
   camera.add(lamp);
   scene.add(camera);
 
@@ -675,21 +676,63 @@ const CONFIG = {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
     worldRoot.add(new THREE.Mesh(geo, yellowMat));
   }
-  // 黄色い誘導線：通路には線を引き、広場は埋めず「出入口どうしを縦横の最短L字」でつなぐ
+  // 黄色い誘導線：通路には中央線を引き、広場は格子で埋めず「出入口どうしを縦横の最短L字」で繋ぐだけ
   function buildYellowLines(f){
     if(f===1){ buildPlatformYellow(); return; }
     const g=grids[f];
     const isFloor=(x,y)=> x>=0&&y>=0&&x<C.COLS&&y<C.ROWS && g[y][x]===0 && !stairTileSet.has(x+","+y);
+    // 広場(open)=どこかの2x2が全部床に含まれるマス
+    const open=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(false));
+    for(let y=0;y<C.ROWS-1;y++)for(let x=0;x<C.COLS-1;x++){
+      if(isFloor(x,y)&&isFloor(x+1,y)&&isFloor(x,y+1)&&isFloor(x+1,y+1)){
+        open[y][x]=open[y][x+1]=open[y+1][x]=open[y+1][x+1]=true;
+      }
+    }
+    // 広場の連結成分(region)に番号付け＋各regionの出入口(mouth)を集める
+    const region=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
+    const mouths={}; let rid=0;
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(open[y][x]&&region[y][x]<0){
+        const q=[[x,y]]; region[y][x]=rid; mouths[rid]=[]; let i=0;
+        while(i<q.length){ const [cx,cy]=q[i++];
+          for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=cx+dx,ny=cy+dy;
+            if(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS&&open[ny][nx]&&region[ny][nx]<0){ region[ny][nx]=rid; q.push([nx,ny]); } } }
+        rid++;
+      }
+    }
     const h=(f-1)*FH+0.06, wHalf=0.2, verts=[];
     const segWorld=(ax,az,bx,bz)=>{ const px=(ax===bx)?wHalf:0, pz=(az===bz)?wHalf:0;
       verts.push(ax+px,h,az+pz, bx+px,h,bz+pz, bx-px,h,bz-pz,
                  ax+px,h,az+pz, bx-px,h,bz-pz, ax-px,h,az-pz); };
     const seg=(x1,y1,x2,y2)=>{ const a=tileToWorld(x1,y1),b=tileToWorld(x2,y2); segWorld(a.x,a.z,b.x,b.z); };
-    // 床タイルの中央どうしを縦横につなぐ＝通路は中央を一直線、広場は等間隔の格子に線が通る
+    // 通路の線＋広場の出入口へのスタブ（広場の内部どうしは引かない）
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(!isFloor(x,y)) continue;
       for(const [dx,dy] of [[1,0],[0,1]]){ const nx=x+dx,ny=y+dy;
-        if(isFloor(nx,ny)) seg(x,y,nx,ny);   // 通路の中央線＋広場の格子線（斜めなし）
+        if(!isFloor(nx,ny)) continue;
+        const ao=open[y][x], bo=open[ny][nx];
+        if(ao&&bo) continue;            // 広場の内部：線を引かない
+        seg(x,y,nx,ny);                 // 通路の線 or 広場入口へのスタブ
+        if(ao&&!bo) mouths[region[y][x]].push([x,y]);
+        if(bo&&!ao) mouths[region[ny][nx]].push([nx,ny]);
+      }
+    }
+    // 各広場：出入口どうしを最短(マンハッタン)でMST接続し、L字(横→縦)で描く
+    for(const r in mouths){
+      const seen=new Set();
+      let ms=mouths[r].filter(m=>{const k=m[0]+","+m[1]; if(seen.has(k))return false; seen.add(k); return true;});
+      if(ms.length<2) continue;
+      const used=[ms[0]], rest=ms.slice(1);
+      while(rest.length){
+        let bi=0,bj=0,bd=1e9;
+        for(let i=0;i<used.length;i++)for(let j=0;j<rest.length;j++){
+          const d=Math.abs(used[i][0]-rest[j][0])+Math.abs(used[i][1]-rest[j][1]);
+          if(d<bd){bd=d;bi=i;bj=j;}
+        }
+        const a=used[bi], b=rest[bj];
+        seg(a[0],a[1], b[0],a[1]);   // 横
+        seg(b[0],a[1], b[0],b[1]);   // 縦
+        used.push(b); rest.splice(bj,1);
       }
     }
     if(!verts.length) return;
@@ -860,23 +903,20 @@ const CONFIG = {
     // 下の各階（最上階以外）にも白めグレーの天井を貼る
     for(let f=1;f<NF;f++) buildFloorCeilings(f);
 
-    // 各階の天井照明（地上階は数も明るさも増やして明るく）
+    // 各階の天井照明。到達距離は「真下のフロアに届かない」値に制限＝下の階の床が光らない（発光防止）
     for(let f=2;f<=NF;f++){
-      const isTop=(f===NF), liMax=isTop?16:8;
+      const isTop=(f===NF), liMax=isTop?14:8;
+      const lightY=(isTop?TOPCEIL:f*FH)-0.5;
+      const dist=Math.min((isTop?10:7), lightY-(f-2)*FH-1.0); // 下の階の床(=(f-2)*FH)に届く手前で減衰
       let li=0;
       for(let y=2;y<C.ROWS-1;y+=3){ for(let x=2;x<C.COLS-1;x+=3){
         if(li>=liMax) break;
         if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){
           const w=tileToWorld(x,y);
-          const pl=new THREE.PointLight(isTop?0xfff6ec:0xfff2d8, isTop?0.85:0.5, isTop?T*8:T*6, 2);
-          pl.position.set(w.x, (isTop?TOPCEIL:f*FH)-0.5, w.z); worldRoot.add(pl); li++;
+          const pl=new THREE.PointLight(isTop?0xfff6ec:0xfff2d8, isTop?0.8:0.6, dist, 2);
+          pl.position.set(w.x, lightY, w.z); worldRoot.add(pl); li++;
         }
       }}
-    }
-    // 地上階の自然光（天窓のような上からの柔らかい光。地上付近を広く照らす）
-    for(let i=0;i<3;i++){
-      const sky=new THREE.PointLight(0xeaf2ff, 0.4, W*0.7, 1.6);
-      sky.position.set(W*(0.25+0.25*i), TOPCEIL-1.2, D*(0.3+0.2*i)); worldRoot.add(sky);
     }
 
     // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録＋幅広出口はgridsを掘る
@@ -1084,10 +1124,14 @@ const CONFIG = {
     }
     shuffle(cand);
     const chosen=[];
-    for(const c of cand){
-      if(chosen.length>=C.EXIT_COUNT) break;
-      if(chosen.some(p=>Math.abs(p.tx-c.tx)+Math.abs(p.ty-c.ty)<5)) continue; // 広い改札ぶん間隔を広く
-      chosen.push(c);
+    // 間隔をあけて選ぶ。目標数に届かなければ間隔を詰めて追加（14個を必ず確保）
+    for(let gap=4; gap>=1 && chosen.length<C.EXIT_COUNT; gap--){
+      for(const c of cand){
+        if(chosen.length>=C.EXIT_COUNT) break;
+        if(chosen.includes(c)) continue;
+        if(chosen.some(p=>Math.abs(p.tx-c.tx)+Math.abs(p.ty-c.ty)<gap)) continue;
+        chosen.push(c);
+      }
     }
     // 番号を外周(時計回り)順に並べる＝1,2,3,..が順に並ぶ
     const perimIdx=c=> c.oy<0 ? c.tx : (c.ox>0 ? C.COLS+c.ty : (c.oy>0 ? C.COLS+C.ROWS+(C.COLS-c.tx) : 2*C.COLS+C.ROWS+(C.ROWS-c.ty)));
