@@ -82,6 +82,7 @@ const CONFIG = {
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 3,   // 地上フロアの歩行者は基準の何倍にするか（地上=225人）
+  B2_PED_MULT: 5,       // 地下2階の歩行者は基準の何倍にするか
   PED_SPEED: 1.6,       // 歩行者の歩く速さ
   PED_RUSH_SPEED: 5.4,  // 一時的に速くなる通行人の速度（プレイヤー級）
   PED_RUSH_CHANCE: 0.12,// 方向転換時に急ぎ足になる確率
@@ -184,7 +185,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.35";
+  const APP_VERSION = "Ver.36";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -575,7 +576,7 @@ const CONFIG = {
   // 下階の天井（各フロアの上に貼る白めグレーの天井）
   const underCeilTex=makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false});
   const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide});
-  const blackCeilMat=new THREE.MeshBasicMaterial({color:0x000000,side:THREE.DoubleSide}); // 地下2階の天井は黒（不透過）
+  const blackCeilMat=new THREE.MeshBasicMaterial({color:0x202327,side:THREE.DoubleSide}); // 地下2階の天井はグレー寄りの黒（不透過）
   const ceilMat=new THREE.MeshLambertMaterial({map:ceilTex,color:0xffffff});
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
   const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
@@ -900,7 +901,7 @@ const CONFIG = {
     let pi=0;
     for(let f=1;f<=NF;f++){
       const pool=poolByFloor[f]; if(!pool.length) continue;
-      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : basePer;
+      const cnt = (f===NF) ? basePer*C.GROUND_PED_MULT : (f===1 ? basePer*C.B2_PED_MULT : basePer);
       for(let k=0;k<cnt;k++){
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
