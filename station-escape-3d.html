@@ -111,7 +111,7 @@ const CONFIG = {
   LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
   PLAZA_COUNTS: {1:0, 2:16, 3:14}, // 各フロアの広場の数（地下2階はプラットホームなので未使用）
 
-  EXIT_COUNT: 14,       // 出口の数（すべて最上階。1つが正解）
+  EXIT_COUNT: 17,       // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
 
   SHOW_MAP: true,       // 左上のテスト用マップ
@@ -206,7 +206,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.59";
+  const APP_VERSION = "Ver.60";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -647,7 +647,14 @@ const CONFIG = {
   }
   let boarders=[]; // 開いたドアから乗降する人
   let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
-  function obstacleHit(x,z,extra){ for(const o of platObstacles){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; } return false; }
+  let groundKiosks=[];  // 地上の売店（円の当たり判定＋来客の目的地）
+  let kioskFields={};   // 各売店への経路場
+  function obstacleHit(x,z,extra,f){
+    const list = (f===1) ? platObstacles : (f===NF ? groundKiosks : null);
+    if(!list) return false;
+    for(const o of list){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; }
+    return false;
+  }
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
   const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false; skyMat.toneMapped=false;
   const plazaMat=new THREE.MeshBasicMaterial({color:0xdad6c8}); plazaMat.fog=false; plazaMat.toneMapped=false; // 地上の広場(明るい舗装)
@@ -972,9 +979,18 @@ const CONFIG = {
       chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z, hunt:false, showAlert:false, alerted:false, wtx:cw.x, wtz:cw.z });
     });
 
+    // 地上の売店（広場の中央に最大5か所。地下2階と同じ大きさ。来客の「出入り」先）
+    findGroundKiosks();
+    for(const k of groundKiosks){
+      const m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9), kioskMat);
+      m.position.set(k.x, (NF-1)*FH + FH*0.35, k.z); worldRoot.add(m);
+    }
+
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     pedPool={};
-    for(let f=1;f<=NF;f++) pedPool[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(f===1&&CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
+    for(let f=1;f<=NF;f++) pedPool[f]=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y)
+        && !(f===1&&CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y))
+        && !(f===NF&&groundKiosks.some(k=>k.tx===t.x&&k.ty===t.y)));   // 売店の真上には湧かせない
     const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
     pedTargets={};
     for(let f=1;f<=NF;f++) pedTargets[f]=(f===NF)?basePer*C.GROUND_PED_MULT:(f===1?basePer*C.B2_PED_MULT:basePer*C.B1_PED_MULT);
@@ -988,19 +1004,23 @@ const CONFIG = {
         const t=pool[(Math.random()*pool.length)|0];
         const w=tileToWorld(t.x,t.y);
         const px=w.x+(Math.random()-0.5)*T*0.4, pz=w.z+(Math.random()-0.5)*T*0.4;
-        const p={x:px,z:pz,level:f,y:(f-1)*FH,dir:Math.random()*6.28,timer:Math.random()*3,rush:0,ci:(pi++)%clothColors.length,ry:0,kind:"W",goal:0,ride:null,trip:-1,lastStair:-1,roleT:Math.random()*8};
-        setPedRole(p);   // 5割は徘徊、5割はフロア間移動
+        const p={x:px,z:pz,level:f,y:(f-1)*FH,dir:Math.random()*6.28,timer:Math.random()*3,rush:0,ci:(pi++)%clothColors.length,ry:0,kind:"W",goal:0,ride:null,trip:-1,lastStair:-1,ktarget:-1,visit:0,roleT:Math.random()*8};
+        setPedRole(p);   // 5割は徘徊、5割はフロア間移動（地上は半分が売店へ）
         pedestrians.push(p);
       }
     }
     balAccum=0;
     buildPedInstances();   // 大量の歩行者をインスタンス描画で軽量に
   }
-  // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動（地上→地下1階, それ以外→上の階）
+  // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動 / 'K'=売店へ出入り（地上のみ・半分）
   function setPedRole(p){
+    p.ride=null; p.visit=0;
+    if(p.level===NF && groundKiosks.length && Math.random()<0.5){   // 地上の半分は売店へ
+      const ki=pickKiosk(p);
+      if(ki>=0){ p.kind="K"; p.ktarget=ki; p.trip=-1; return; }
+    }
     if(Math.random()<0.5){ p.kind="M"; p.trip=pickStair(p); p.goal=(p.trip>=0)?p.level+((p.level===NF)?-1:1):0; if(p.trip<0) p.kind="W"; }
     else { p.kind="W"; p.goal=0; p.trip=-1; }
-    p.ride=null;
   }
   // フロー場(BFS)。階段ごとに「その階段の昇降口へ向かう一歩」を持つ＝目的の階段を選べる
   function bfsField(f,targets){
@@ -1051,6 +1071,54 @@ const CONFIG = {
       if(i!==p.lastStair && score<bd){ bd=score; best=i; }
     }
     return best>=0?best:any;   // 直前と別の・空いている階段を優先。無ければ到達可能な最寄り
+  }
+  // 地上の広場(open)を見つけ、大きい順に5か所へ地下2階と同じ大きさの売店を置く＋経路場を作る
+  function findGroundKiosks(){
+    groundKiosks=[]; kioskFields={};
+    const f=NF, g=grids[f];
+    const isFloor=(x,y)=> x>=0&&y>=0&&x<C.COLS&&y<C.ROWS && g[y][x]===0 && !stairTileSet.has(x+","+y);
+    const open=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(false));
+    for(let y=0;y<C.ROWS-1;y++)for(let x=0;x<C.COLS-1;x++){
+      if(isFloor(x,y)&&isFloor(x+1,y)&&isFloor(x,y+1)&&isFloor(x+1,y+1)){
+        open[y][x]=open[y][x+1]=open[y+1][x]=open[y+1][x+1]=true; } }
+    const region=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1)); const regs=[]; let rid=0;
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(open[y][x]&&region[y][x]<0){ const q=[[x,y]]; region[y][x]=rid; let i=0; const tiles=[];
+        while(i<q.length){ const [cx,cy]=q[i++]; tiles.push([cx,cy]);
+          for(const [dx,dy] of DIRS4){ const nx=cx+dx,ny=cy+dy;
+            if(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS&&open[ny][nx]&&region[ny][nx]<0){ region[ny][nx]=rid; q.push([nx,ny]); } } }
+        regs.push(tiles); rid++; } }
+    regs.sort((a,b)=>b.length-a.length);
+    for(const tiles of regs){
+      if(groundKiosks.length>=5) break;
+      if(tiles.length<6) continue;                       // 小さすぎる広場には置かない
+      let cx=0,cy=0; for(const [x,y] of tiles){cx+=x;cy+=y;} cx/=tiles.length; cy/=tiles.length;
+      let best=tiles[0],bd=1e9; for(const [x,y] of tiles){ const d=Math.abs(x-cx)+Math.abs(y-cy); if(d<bd){bd=d;best=[x,y];} }
+      const [tx,ty]=best; if(stairTileSet.has(tx+","+ty)) continue;
+      const w=tileToWorld(tx,ty);
+      groundKiosks.push({x:w.x, z:w.z, r:2.0, tx, ty});
+    }
+    groundKiosks.forEach((k,i)=>{ kioskFields[i]=bfsField(NF,[[k.tx,k.ty]]); });
+  }
+  // 現在地から到達できる売店のうち最寄りを選ぶ
+  function pickKiosk(p){
+    let best=-1,bd=1e9; const tx=Math.floor(p.x/T),ty=Math.floor(p.z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return -1;
+    for(let i=0;i<groundKiosks.length;i++){ const ff=kioskFields[i]; if(!ff)continue;
+      const d=ff.dist[ty][tx]; if(d<0)continue; if(d<bd){bd=d;best=i;} }
+    return best;
+  }
+  // 売店へ向かい、着いたら一定時間「出入り(滞在)」してから徘徊に戻る
+  function kioskStep(p, dt){
+    const k=groundKiosks[p.ktarget];
+    if(!k){ p.kind="W"; wanderStep(p,dt); return; }
+    if(p.visit>0){ p.visit-=dt; p.ry=Math.atan2(k.x-p.x,k.z-p.z);
+      if(p.visit<=0){ p.kind="W"; p.goal=0; p.trip=-1; p.roleT=4+Math.random()*6; } return; }
+    if(Math.hypot(p.x-k.x,p.z-k.z) < k.r+1.4){ p.visit=2.5+Math.random()*2.5; return; }  // 到着→出入り
+    const ff=kioskFields[p.ktarget], tx=Math.floor(p.x/T), ty=Math.floor(p.z/T);
+    if(ff && tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS && ff.step[ty][tx]>=0){
+      const dd=DIRS4[ff.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]); pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false);
+    } else { pedMoveDir(p, k.x-p.x, k.z-p.z, dt, false); }
   }
   // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
   let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
@@ -1254,7 +1322,7 @@ const CONFIG = {
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
-    if(player.level===1 && obstacleHit(x,z,0.45)) return false;   // 中央の柱など（小さい当たり判定）
+    if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店
     // 階段とその周辺ではプレイヤー優先＝通行人で絶対に詰まらない（必ず通れる）
     let nearStair=isStairTileAt(x,z) || isStairTileAt(player.x,player.z);
     if(!nearStair){
@@ -1282,7 +1350,7 @@ const CONFIG = {
     camera.position.set(player.x, player.y+C.EYE_HEIGHT, player.z);
   }
 
-  function entCanStand(x,z,r,f){ return canStand(x,z,r,f) && !(f===1 && obstacleHit(x,z,0.3)); }
+  function entCanStand(x,z,r,f){ return canStand(x,z,r,f) && !obstacleHit(x,z,0.3,f); }
   function moveToward(ent,tx,tz,speed,dt,r){
     const f=ent.level;
     let dx=tx-ent.x, dz=tz-ent.z; const len=Math.hypot(dx,dz);
@@ -1364,7 +1432,7 @@ const CONFIG = {
                    : (allowStair? C.PED_SPEED*1.8 : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED)); // 階段は速く通り抜け＝詰まりにくく
     const nx=vx*sp*dt, nz=vz*sp*dt, f=p.level;
     const ok=(X,Z)=> allowStair ? entCanStand(X,Z,PED_R,f)
-                                : (canStandPed(X,Z,PED_R,f) && !(f===1&&obstacleHit(X,Z,0.3)));
+                                : (canStandPed(X,Z,PED_R,f) && !obstacleHit(X,Z,0.3,f));
     let moved=false;
     if(ok(p.x+nx,p.z)){ p.x+=nx; moved=true; }
     if(ok(p.x,p.z+nz)){ p.z+=nz; moved=true; }
@@ -1434,8 +1502,9 @@ const CONFIG = {
     stairRiders=new Array(stairs.length).fill(0);
     for(const p of pedestrians){ const sid=p.ride?p.ride.sid:p.trip; if(sid>=0) stairLoad[sid]++; if(p.ride) stairRiders[p.ride.sid]++; }
     for(const p of pedestrians){
-      if(!p.ride){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
-      if(p.kind==="M"){
+      if(!p.ride && !(p.kind==="K"&&p.visit>0)){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
+      if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
+      else if(p.kind==="M"){
         moverStep(p, dt);
         const si=stairInfo(p.x,p.z,p.level);
         if(si){ p.y=si.y; p.level=si.t>=0.5?si.lvl+1:si.lvl; }
