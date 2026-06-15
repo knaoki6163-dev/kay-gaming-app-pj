@@ -215,7 +215,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.65";
+  const APP_VERSION = "Ver.66";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1059,7 +1059,7 @@ const CONFIG = {
         patField:null, patReached:true, _px:cw.x, _pz:cw.z, _stuck:0 });
     });
 
-    // 地上の売店（広場の中央に最大5か所。地下2階と同じ大きさ。来客の「出入り」先）
+    // 地上の売店（広場の中央に最大7か所。地下2階と同じ大きさ。来客の「出入り」先）
     findGroundKiosks();
     for(const k of groundKiosks){
       const m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9), kioskMat);
@@ -1170,7 +1170,7 @@ const CONFIG = {
     }
     return best>=0?best:any;   // 直前と別の・空いている階段を優先。無ければ到達可能な最寄り
   }
-  // 地上の売店：中央の広場に5か所（階段の近く・出口(外周)の近くには置かない）
+  // 地上の売店：中央の広場に7か所（階段の近く・出口(外周)の近くには置かない）
   function findGroundKiosks(){
     groundKiosks=[]; kioskFields={};
     const f=NF, g=grids[f];
@@ -1192,9 +1192,9 @@ const CONFIG = {
       cand.push({x,y,dc:Math.hypot(x-cxC,y-cyC)});
     }
     cand.sort((a,b)=>a.dc-b.dc);                        // 中央に近い順
-    for(let gap=5; gap>=2 && groundKiosks.length<5; gap--){
+    for(let gap=5; gap>=2 && groundKiosks.length<7; gap--){
       for(const c of cand){
-        if(groundKiosks.length>=5) break;
+        if(groundKiosks.length>=7) break;
         if(groundKiosks.some(k=>Math.abs(k.tx-c.x)+Math.abs(k.ty-c.y)<gap)) continue;
         const w=tileToWorld(c.x,c.y);
         groundKiosks.push({x:w.x, z:w.z, r:2.0, tx:c.x, ty:c.y});
