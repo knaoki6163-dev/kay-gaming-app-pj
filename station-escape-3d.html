@@ -87,6 +87,7 @@ const CONFIG = {
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
+  CHASER_FLOOR_TIME: 22,// 敵が1フロアを巡回し続ける時間(秒)。これを過ぎると別フロアへ入れ替わる
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
@@ -206,7 +207,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.63";
+  const APP_VERSION = "Ver.64";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -591,7 +592,7 @@ const CONFIG = {
 
   // ---------- ワールド構築 ----------
   const worldRoot=new THREE.Group(); scene.add(worldRoot);
-  let exits=[], correctExitNo=1, chasers=[], pedestrians=[];
+  let exits=[], correctExitNo=1, chasers=[], pedestrians=[], chaserTargets={};
   let deptDoors=[], trainDoors=[];      // 各フロアの「人の出入り口」: B1=デパート, B2=電車ドア
   let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1;
@@ -969,15 +970,20 @@ const CONFIG = {
       if(f===2) buildDeptEntrances(f);   // 地下1階の壁にデパート出入口（装飾・通行不可）
     }
 
-    // 追跡者（赤い人型・歩行者と同じ大きさ）を指定階に配置
+    // 追跡者（赤い人型）を指定階に配置。フロアごとの人数を保つ目標値も作る
     chasers=[];
+    chaserTargets={}; for(let f=1;f<=NF;f++) chaserTargets[f]=0;
+    C.CHASER_FLOORS.forEach(l=>{ chaserTargets[l]=(chaserTargets[l]||0)+1; });
     const usedSpawns=[];
     C.CHASER_FLOORS.forEach(lvl=>{
       const cw=(lvl===1)?spawnOnLane(playerStartLane):spawnOnFloor(lvl, usedSpawns); // 地下2階の敵はプレイヤーと同じホーム
       const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
       g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
       g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
-      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"徘徊", dir:Math.random()*6.28, wt:0, mem:0, lx:cw.x, lz:cw.z, hunt:false, showAlert:false, alerted:false, wtx:cw.x, wtz:cw.z });
+      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"巡回", dir:Math.random()*6.28,
+        mem:0, lx:cw.x, lz:cw.z, showAlert:false, alerted:false,
+        mode:"patrol", floorTimer:C.CHASER_FLOOR_TIME*(0.5+Math.random()), transit:null,
+        patField:null, patReached:true, _px:cw.x, _pz:cw.z, _stuck:0 });
     });
 
     // 地上の売店（広場の中央に最大5か所。地下2階と同じ大きさ。来客の「出入り」先）
@@ -1065,7 +1071,8 @@ const CONFIG = {
     stairs.forEach((s,i)=>{
       if(s.lvl===2){ flowFields[(NF)+"_"+i]=bfsField(NF,[s.exit]);  // 地上→その階段(降り口)
                      flowFields["2_"+i]=bfsField(2,[s.entry]); }    // 地下1階→その階段(上り口)
-      else if(s.lvl===1){ flowFields["1_"+i]=bfsField(1,[s.entry]); } // 地下2階→その階段
+      else if(s.lvl===1){ flowFields["1_"+i]=bfsField(1,[s.entry]);  // 地下2階→その階段(上り口)
+                          flowFields["2_"+i]=bfsField(2,[s.exit]); } // 地下1階→その階段(降り口)＝敵の下り移動用
     });
   }
   function fieldAt(floor,sid,x,z){
@@ -1387,54 +1394,108 @@ const CONFIG = {
     }
   }
 
+  // 巡回の目標（遠い到達可能タイル）を選び、そこへ向かう経路場を作る＝フロアを大きく巡回
+  function newPatrolTarget(chaser){
+    const f=chaser.level, tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return;
+    const fromEnemy=bfsField(f,[[tx,ty]]);          // 敵からの距離
+    let far=[];
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){ if(fromEnemy.dist[y][x]>=12) far.push([x,y]); }
+    if(!far.length){ for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){ if(fromEnemy.dist[y][x]>=2) far.push([x,y]); } }
+    if(!far.length) return;
+    const t=far[(Math.random()*far.length)|0];
+    chaser.patField=bfsField(f,[[t[0],t[1]]]); chaser.patReached=false;
+  }
+  function patrolStep(chaser, dt){
+    if(!chaser.patField || chaser.patReached){ newPatrolTarget(chaser); }
+    const ff=chaser.patField;
+    const tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T);
+    const d=(ff && tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS)? ff.dist[ty][tx] : -1;
+    if(d>=0 && d<=1){ chaser.patReached=true; return; }                    // 到着→次の巡回先
+    if(ff && d>=0 && ff.step[ty][tx]>=0){ const dd=DIRS4[ff.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]);
+      moveToward(chaser, tw.x, tw.z, C.CHASER_WANDER, dt, CHASER_R); }
+    else { chaser.patReached=true; return; }
+    if(chaser.x===chaser._px && chaser.z===chaser._pz){ chaser._stuck+=dt; if(chaser._stuck>1.0){ chaser.patReached=true; chaser._stuck=0; } } else chaser._stuck=0;
+  }
+  // フロア間移動（巡回先ではなく階段へ向かい渡る）
+  function enemyStair(x,z,f,dir){
+    let best=-1,bd=1e9, tx=Math.floor(x/T),ty=Math.floor(z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return -1;
+    for(let i=0;i<stairs.length;i++){ const s=stairs[i];
+      if(dir>0? s.lvl!==f : s.lvl+1!==f) continue;
+      const ff=flowFields[f+"_"+i]; if(!ff) continue;
+      const dd=ff.dist[ty][tx]; if(dd<0) continue;
+      if(dd<bd){ bd=dd; best=i; } }
+    return best;
+  }
+  function enemyTransitStep(chaser, dt){
+    const t=chaser.transit; t.t=(t.t||0)+dt;
+    if(t.t>30){ // 安全策：万一渡れず詰まったら目的フロアへワープして到着扱い（人数を必ず保つ）
+      const tiles=allFloorTiles(t.goal).filter(q=>!stairTileSet.has(q.x+","+q.y));
+      if(tiles.length){ const q=tiles[(Math.random()*tiles.length)|0], w=tileToWorld(q.x,q.y); chaser.x=w.x; chaser.z=w.z; chaser.level=t.goal; }
+      return;
+    }
+    const s=stairs[t.sid], ff=flowFields[chaser.level+"_"+t.sid];
+    const tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T);
+    const fd=(ff && tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS)? ff.dist[ty][tx] : -2;
+    if(isStairTileAt(chaser.x,chaser.z) || (fd>=0 && fd<=1)){   // 階段口/階段上→渡る
+      const dest=t.dir>0? s.exit : s.entry, dw=tileToWorld(dest[0],dest[1]);
+      moveToward(chaser, dw.x, dw.z, C.CHASER_WANDER, dt, CHASER_R);
+    } else if(ff && fd>=0 && ff.step[ty][tx]>=0){
+      const dd=DIRS4[ff.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]);
+      moveToward(chaser, tw.x, tw.z, C.CHASER_WANDER, dt, CHASER_R);
+    } else {                                                    // 経路が見つからない→階段を選び直す/中心へ
+      const si=enemyStair(chaser.x,chaser.z,chaser.level,t.dir);
+      if(si>=0 && si!==t.sid){ t.sid=si; } else { moveToward(chaser, s.cx, s.cz, C.CHASER_WANDER, dt, CHASER_R); }
+    }
+  }
+  function startTransit(c, dir){
+    const goal=c.level+dir, sid=enemyStair(c.x,c.z,c.level,dir);
+    if(sid<0){ c.floorTimer=4+Math.random()*4; return false; }   // 階段に行けない→後で再挑戦
+    c.mode="transit"; c.transit={dir,goal,sid}; return true;
+  }
+  // フロア間の入れ替え：隣り合う階で「巡回時間が過ぎた敵」が両方に居たら同時に交換＝人数を保つ
+  function swapChaserFloors(){
+    for(let f=1; f<NF; f++){
+      const a=chasers.find(c=> c.level===f   && c.mode==="patrol" && c.floorTimer<=0 && c.mem<=0);
+      const b=chasers.find(c=> c.level===f+1 && c.mode==="patrol" && c.floorTimer<=0 && c.mem<=0);
+      if(a && b){ if(startTransit(a,+1)) startTransit(b,-1); }    // a:上へ / b:下へ
+    }
+  }
   function updateChasers(dt){
+    swapChaserFloors();
     for(const chaser of chasers){
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
-      const sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT; // 一度見つけた敵は探知範囲UP
+      const sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
       const see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
-      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; } // 一度でも見たら以後強化
-      // 地下2階の敵：一度見つけたら永続追跡(hunt)。地下1階に上がったら通常化
-      if(chaser.level===1 && see) chaser.hunt=true;
-      if(chaser.level>=2) chaser.hunt=false;
-
-      let chasing=false, tx=chaser.x, tz=chaser.z;
-      if(chaser.hunt){
-        chasing=true;
-        if(player.level<=1){ tx=player.x; tz=player.z; }          // 地下2階に居る間は本人を追う
-        else { const s=nearestStairForMove(chaser.x,chaser.z,1,1); if(s){tx=s.cx;tz=s.cz;} } // 上の階段へ向かい追って上がる
-        chaser.showAlert = see;                                   // 見失い中はサイレント(赤枠なし)
-        chaser.state = see?"発見・追跡":"追跡(無音)";
-      } else {
-        if(see) chaser.mem=C.CHASER_MEMORY;
-        if(chaser.mem>0) chaser.mem-=dt;
-        chasing=chaser.mem>0;
-        chaser.showAlert = chasing;
-        chaser.state = chasing? (see?"発見・追跡":"捜索") : "徘徊";
-        if(chasing){
-          if(same){ tx=chaser.lx; tz=chaser.lz; }
-          else { const dir=player.level>chaser.level?1:-1; const s=nearestStairForMove(chaser.x,chaser.z,chaser.level,dir);
-                 if(s){tx=s.cx;tz=s.cz;} }
-        }
-      }
+      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=C.CHASER_MEMORY; }
+      else if(chaser.mem>0) chaser.mem-=dt;
+      // 追跡は「巡回中＆同フロア」のみ（移動中=transitは横断に専念）。スピードは従来どおり
+      const chasing = chaser.mode==="patrol" && same && chaser.mem>0;
+      chaser.showAlert = chasing;
+      chaser.state = chasing? (see?"発見・追跡":"捜索") : (chaser.mode==="transit"?"別フロアへ移動":"巡回");
 
       if(chasing){
-        moveToward(chaser,tx,tz,C.CHASER_SPEED,dt,CHASER_R);
+        moveToward(chaser, chaser.lx, chaser.lz, C.CHASER_SPEED, dt, CHASER_R);
+      } else if(chaser.mode==="transit"){
+        enemyTransitStep(chaser, dt);
       } else {
-        chaser.wt-=dt;
-        if(chaser.wt<=0){ chaser.dir=Math.random()*6.28; chaser.wt=1+Math.random()*2;
-          if(chaser.alerted){ chaser.wtx=chaser.lx+(Math.random()-0.5)*10; chaser.wtz=chaser.lz+(Math.random()-0.5)*10; } // 一度見た敵は最終位置付近へ寄る
-          else { chaser.wtx=chaser.x+Math.cos(chaser.dir)*4; chaser.wtz=chaser.z+Math.sin(chaser.dir)*4; }
-        }
-        moveToward(chaser, chaser.wtx, chaser.wtz, C.CHASER_WANDER, dt, CHASER_R);
-        if(chaser.x===chaser._px && chaser.z===chaser._pz) chaser.wt=0; // 詰まったら再設定
+        chaser.floorTimer-=dt;
+        patrolStep(chaser, dt);
       }
+      const mvx=chaser.x-chaser._px, mvz=chaser.z-chaser._pz;
       chaser._px=chaser.x; chaser._pz=chaser.z;
 
       const si=stairInfo(chaser.x,chaser.z,chaser.level);
       if(si){ chaser.y=si.y; chaser.level=si.t>=0.5?si.lvl+1:si.lvl; } else { chaser.y=(chaser.level-1)*FH; }
+      if(chaser.mode==="transit" && !si && chaser.transit && chaser.level===chaser.transit.goal){  // 到着→巡回へ
+        chaser.mode="patrol"; chaser.transit=null; chaser.patField=null; chaser.patReached=true;
+        chaser.floorTimer=C.CHASER_FLOOR_TIME*(0.6+Math.random()*0.8);
+      }
       chaser.group.position.set(chaser.x,chaser.y+FOOT_LIFT,chaser.z);
-      chaser.group.lookAt(player.x, chaser.y+1+FOOT_LIFT, player.z);
+      if(chasing){ chaser.group.lookAt(player.x, chaser.y+1+FOOT_LIFT, player.z); }
+      else if(Math.hypot(mvx,mvz)>0.0001){ chaser.group.rotation.set(0,Math.atan2(mvx,mvz),0); }   // 巡回中は進行方向を向く
     }
   }
 
