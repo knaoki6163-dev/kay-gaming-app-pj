@@ -97,7 +97,7 @@ const CONFIG = {
   PED_AVOID_R: 1.8,     // この距離まで近づくとプレイヤーを避け始める
   PED_DODGE_SPEED: 6.5, // ぶつかった瞬間に素早く退く速さ
 
-  STAIR_COUNT: 4,       // 地下1階→地上の階段の数
+  STAIR_COUNT: 6,       // 地下1階→地上の階段の数（多めにして渋滞を分散。一方通行で上り3/下り3）
   STAIR_LEN: 3,         // 階段の長さ（マス数）
   START_CLEAR: 8,       // スタート地点からこのマス数以内には階段を置かない
 
@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.56";
+  const APP_VERSION = "Ver.57";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -229,11 +229,14 @@ const CONFIG = {
     renderer.setSize(innerWidth, innerHeight);
   });
 
-  // 全体光は床が白飛び(発光)しないよう余裕を持たせた値に抑える（明るさは無影の天井・出口の空で確保）
-  scene.add(new THREE.AmbientLight(0x6a727b, 0.6));
-  scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.4));
-  const lamp = new THREE.PointLight(0xffffff, 0.5, T*7, 2);  // プレイヤー追従の一定光（脈動・床の発光を防ぐ）
+  // 全体光は床が白飛び(発光)しないよう十分に余裕を持たせる（明るさは無影の天井・出口の空で確保）
+  scene.add(new THREE.AmbientLight(0x6a727b, 0.45));
+  scene.add(new THREE.HemisphereLight(0x8893a0, 0x20242a, 0.3));
+  const lamp = new THREE.PointLight(0xffffff, 0.32, T*7, 2);  // プレイヤー追従の弱い光
+  lamp.position.set(0, 2.4, 0);   // カメラより上に置いて足元(手前の床)の白飛びを防ぐ
   camera.add(lamp);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;   // 明るい所を白飛びさせず滑らかに丸める
+  renderer.toneMappingExposure = 1.0;
   scene.add(camera);
 
   // ---------- テクスチャ（グレーのタイル） ----------
@@ -600,11 +603,11 @@ const CONFIG = {
   const slabMat=new THREE.MeshLambertMaterial({map:slabTex,color:0xffffff});  // 上面のみ（裏の肌色が下階天井に映らないように）
   // 下階の天井（各フロアの上に貼る白めグレーの天井）
   const underCeilTex=makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false});
-  const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide});
-  const blackCeilMat=new THREE.MeshBasicMaterial({color:0x202327,side:THREE.DoubleSide}); // 地下2階の天井はグレー寄りの黒（不透過）
-  const ceilMat=new THREE.MeshBasicMaterial({map:ceilTex,side:THREE.DoubleSide}); // 地上の天井=地下1階と同じ見た目(無影・同色)
+  const underCeilMat=new THREE.MeshBasicMaterial({map:underCeilTex,side:THREE.DoubleSide,toneMapped:false});
+  const blackCeilMat=new THREE.MeshBasicMaterial({color:0x202327,side:THREE.DoubleSide,toneMapped:false}); // 地下2階の天井はグレー寄りの黒（不透過）
+  const ceilMat=new THREE.MeshBasicMaterial({map:ceilTex,side:THREE.DoubleSide,toneMapped:false}); // 地上の天井=地下1階と同じ見た目(無影・同色)
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
-  const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide}); // 駅の黄色い誘導線
+  const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide,toneMapped:false}); // 駅の黄色い誘導線
   // 壁の看板・ポスター（数種をあらかじめ生成して使い回す）
   function makePosterTexture(p){
     const w=256,h=320,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
@@ -644,8 +647,8 @@ const CONFIG = {
   let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
   function obstacleHit(x,z,extra){ for(const o of platObstacles){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; } return false; }
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
-  const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false;
-  const plazaMat=new THREE.MeshBasicMaterial({color:0xdad6c8}); plazaMat.fog=false; // 地上の広場(明るい舗装)
+  const skyMat=new THREE.MeshBasicMaterial({color:0xeef4ff}); skyMat.fog=false; skyMat.toneMapped=false;
+  const plazaMat=new THREE.MeshBasicMaterial({color:0xdad6c8}); plazaMat.fog=false; plazaMat.toneMapped=false; // 地上の広場(明るい舗装)
 
   const wallSegGeo=new THREE.BoxGeometry(T,FH,T);
   const wallSegGeoTall=new THREE.BoxGeometry(T,FH+C.GROUND_CEIL_EXTRA,T); // 地上フロア用(天井高め)
@@ -881,7 +884,7 @@ const CONFIG = {
         if(li>=liMax) break;
         if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){
           const w=tileToWorld(x,y);
-          const pl=new THREE.PointLight(isTop?0xfff6ec:0xfff2d8, isTop?0.8:0.6, dist, 2);
+          const pl=new THREE.PointLight(isTop?0xfff6ec:0xfff2d8, isTop?0.5:0.45, dist, 2);
           pl.position.set(w.x, lightY, w.z); worldRoot.add(pl); li++;
         }
       }}
@@ -1030,7 +1033,9 @@ const CONFIG = {
     if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return null;
     return {dist:ff.dist[ty][tx], step:ff.step[ty][tx]};
   }
-  // 現在地から行ける(=経路場が届く)階段のうち、直前に使った階段を除いて最も近いものを選ぶ
+  // 現在地から行ける階段のうち、直前に使った階段を除き「距離＋混雑度」が最小のものを選ぶ（渋滞を分散）
+  let stairLoad=[];   // 各階段に向かっている+乗っている総数（pickStairの分散用）
+  let stairRiders=[]; // 各階段に今“乗っている”人数（混雑キャップ用。乗ると減っていくのでデッドロックしない）
   function pickStair(p){
     const f=p.level, dir=(f===NF)?-1:1;
     let best=-1,bd=1e9, any=-1,ad=1e9;
@@ -1038,10 +1043,11 @@ const CONFIG = {
       if(dir>0 ? s.lvl!==f : s.lvl+1!==f) continue;
       if(s.oneWay!==undefined && s.oneWay!==dir) continue;            // 一方通行：方向の合う階段だけ
       const fl=fieldAt(f,i,p.x,p.z); if(!fl || fl.dist<0) continue;   // ここから到達不能な階段は除外
-      if(fl.dist<ad){ ad=fl.dist; any=i; }
-      if(i!==p.lastStair && fl.dist<bd){ bd=fl.dist; best=i; }
+      const score=fl.dist + (stairLoad[i]||0)*1.5;                    // 混んでいる階段は避ける
+      if(score<ad){ ad=score; any=i; }
+      if(i!==p.lastStair && score<bd){ bd=score; best=i; }
     }
-    return best>=0?best:any;   // 直前と別の階段を優先。無ければ到達可能な最寄り
+    return best>=0?best:any;   // 直前と別の・空いている階段を優先。無ければ到達可能な最寄り
   }
   // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
   let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
@@ -1345,7 +1351,8 @@ const CONFIG = {
         if(d<near){ vx=dx/d; vz=dz/d; dodge=true; } }
     }
     const L=Math.hypot(vx,vz); if(L>0.0001){ vx/=L; vz/=L; }
-    const sp= dodge? C.PED_DODGE_SPEED*(allowStair?1.7:1) : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED);
+    const sp= dodge? C.PED_DODGE_SPEED*(allowStair?1.7:1)
+                   : (allowStair? C.PED_SPEED*1.8 : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED)); // 階段は速く通り抜け＝詰まりにくく
     const nx=vx*sp*dt, nz=vz*sp*dt, f=p.level;
     const ok=(X,Z)=> allowStair ? entCanStand(X,Z,PED_R,f)
                                 : (canStandPed(X,Z,PED_R,f) && !(f===1&&obstacleHit(X,Z,0.3)));
@@ -1368,9 +1375,12 @@ const CONFIG = {
     if(p.trip<0){ p.trip=pickStair(p); if(p.trip<0){ wanderStep(p,dt); return; } }
     const s=stairs[p.trip], dir=(p.level===NF)?-1:1;
     const fl=fieldAt(p.level, p.trip, p.x, p.z);
+    // 目的の階段に既に多く乗っている時は、乗らず近くで待機（徘徊）＝階段に長い列を作らない
+    if((stairRiders[p.trip]||0) > 3 && fl && fl.dist<=2){ wanderStep(p, dt); return; }
     if(fl && fl.dist>=0 && fl.dist<=1){          // 目的の階段の昇降口に到着→階段に乗る
       const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
       p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir,sid:p.trip};
+      stairRiders[p.trip]=(stairRiders[p.trip]||0)+1;   // 即時カウント（同フレームで一気に乗らせない）
       pedMoveDir(p, dw.x-p.x, dw.z-p.z, dt, true); return;
     }
     if(fl && fl.step>=0){                         // 経路場に沿って隣のマス中央へ
@@ -1410,6 +1420,10 @@ const CONFIG = {
   function updatePedestrians(dt){
     balAccum+=dt;
     if(balAccum>=0.5){ balAccum=0; balancePedestrians(); }
+    // 各階段の混雑度を集計（pickStair=総需要で分散 / キャップ=実際に乗っている人数）
+    stairLoad=new Array(stairs.length).fill(0);
+    stairRiders=new Array(stairs.length).fill(0);
+    for(const p of pedestrians){ const sid=p.ride?p.ride.sid:p.trip; if(sid>=0) stairLoad[sid]++; if(p.ride) stairRiders[p.ride.sid]++; }
     for(const p of pedestrians){
       if(!p.ride){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
       if(p.kind==="M"){
@@ -1417,8 +1431,10 @@ const CONFIG = {
         const si=stairInfo(p.x,p.z,p.level);
         if(si){ p.y=si.y; p.level=si.t>=0.5?si.lvl+1:si.lvl; }
         else { p.y=(p.level-1)*FH;
-          if(p.ride && p.level===p.ride.goal){ // 目的フロアに到着→直前の階段を記録(=次は別の階段を使う)＋しばらく徘徊して階段口から離れる
-            p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=5+Math.random()*7; }
+          if(p.ride && p.level===p.ride.goal){ // 目的フロアに到着→直前の階段を記録＋階段口から素早く離れて長めに徘徊（滞留防止）
+            const s=stairs[p.ride.sid], aw=Math.atan2(p.z-s.cz, p.x-s.cx);
+            p.dir=aw; p.rush=1.6; p.timer=2.5;                 // 階段から離れる向きに小走り
+            p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=9+Math.random()*9; }
         }
       } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
       const base=p.y+FOOT_LIFT;
