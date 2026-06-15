@@ -25,6 +25,8 @@
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
   #verHud { position:fixed; top:40px; right:12px; z-index:8; font-size:12px; font-weight:bold;
     color:#ffe27a; background:rgba(20,30,45,.85); padding:2px 8px; border-radius:5px; }
+  #muteBtn { position:fixed; top:66px; right:12px; z-index:9; font-size:16px; cursor:pointer;
+    background:rgba(20,30,45,.85); padding:2px 8px; border-radius:5px; user-select:none; }
   #mapToggle { position:fixed; top:38px; left:10px; z-index:8; font-size:13px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:3px 9px; border-radius:6px; cursor:pointer;
     box-shadow:0 2px 6px rgba(0,0,0,.4); user-select:none; }
@@ -124,6 +126,7 @@ const CONFIG = {
 <div id="app"></div>
 <div id="floor" class="hidden"></div>
 <div id="verHud"></div>
+<div id="muteBtn" title="音のオン/オフ">🔊</div>
 <div id="mapToggle" class="hidden">🗺 たたむ（M）</div>
 <div id="timer" class="hidden"></div>
 <canvas id="map" class="hidden"></canvas>
@@ -146,7 +149,10 @@ const CONFIG = {
   <p><b>地下2階</b>からスタート。<b>階段で地上まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から脱出せよ。<br>
      構内には<b>赤い追跡者</b>がいる。普段は徘徊しているが、<b>こちらを見つけると追ってくる</b>。捕まったらゲームオーバー。</p>
   <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
-  <button id="startBtn">クリックして開始</button>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
+    <button id="devBtn">開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span></button>
+    <button id="userBtn">ユーザーとしてプレイ<br><span style="font-size:12px;opacity:.85">（マップなし）</span></button>
+  </div>
   <div id="version"></div>
 </div>
 
@@ -184,7 +190,9 @@ const CONFIG = {
   const cross = document.getElementById("cross");
   const goalEl = document.getElementById("goal");
   const startScreen = document.getElementById("start");
-  const startBtn = document.getElementById("startBtn");
+  const devBtn = document.getElementById("devBtn");
+  const userBtn = document.getElementById("userBtn");
+  const muteBtn = document.getElementById("muteBtn");
   const resultScreen = document.getElementById("result");
   const resultText = document.getElementById("resultText");
   const restartBtn = document.getElementById("restartBtn");
@@ -207,7 +215,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.64";
+  const APP_VERSION = "Ver.65";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -233,6 +241,71 @@ const CONFIG = {
     camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
+
+  // ---------- 音（Web Audioで合成。外部ファイル不要） ----------
+  let AC=null, masterGain=null, noiseBuf=null, audioOn=true, ambTimers=[];
+  function ensureAudio(){
+    if(AC){ if(AC.state==="suspended") AC.resume(); return; }
+    const Ctor=window.AudioContext||window.webkitAudioContext; if(!Ctor) return;
+    AC=new Ctor();
+    masterGain=AC.createGain(); masterGain.gain.value=audioOn?0.5:0; masterGain.connect(AC.destination);
+    noiseBuf=AC.createBuffer(1, (AC.sampleRate*1.2)|0, AC.sampleRate);
+    const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    startAmbient();
+  }
+  function tone(freq,dur,o){ o=o||{}; if(!AC) return;
+    const t=AC.currentTime+(o.when||0), osc=AC.createOscillator(); osc.type=o.type||"sine";
+    osc.frequency.setValueAtTime(freq,t); if(o.glideTo) osc.frequency.exponentialRampToValueAtTime(o.glideTo,t+dur);
+    const g=AC.createGain(), v=o.vol==null?0.2:o.vol, a=o.attack==null?0.01:o.attack;
+    g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(v,t+a); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    osc.connect(g).connect(masterGain); osc.start(t); osc.stop(t+dur+0.03);
+  }
+  function noise(dur,o){ o=o||{}; if(!AC||!noiseBuf) return;
+    const t=AC.currentTime+(o.when||0), src=AC.createBufferSource(); src.buffer=noiseBuf;
+    let node=src; const lpf=AC.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=o.lp||1200; node.connect(lpf); node=lpf;
+    if(o.hp){ const hpf=AC.createBiquadFilter(); hpf.type="highpass"; hpf.frequency.value=o.hp; node.connect(hpf); node=hpf; }
+    const g=AC.createGain(), v=o.vol==null?0.2:o.vol; g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    node.connect(g).connect(masterGain); src.start(t); src.stop(t+dur+0.03);
+  }
+  function startAmbient(){
+    // 低い駅のハム（連続・うなり）
+    const o1=AC.createOscillator(); o1.type="sine"; o1.frequency.value=55;
+    const o2=AC.createOscillator(); o2.type="sine"; o2.frequency.value=58.5;
+    const hg=AC.createGain(); hg.gain.value=0.045; o1.connect(hg); o2.connect(hg); hg.connect(masterGain); o1.start(); o2.start();
+    // 空調のホワイトノイズ（連続）
+    const src=AC.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
+    const lpf=AC.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=340;
+    const ng=AC.createGain(); ng.gain.value=0.035; src.connect(lpf).connect(ng).connect(masterGain); src.start();
+    scheduleChime(); scheduleTrain(); scheduleCrowd();
+  }
+  function scheduleChime(){ ambTimers.push(setTimeout(()=>{ stationChime(); scheduleChime(); }, 12000+Math.random()*26000)); }
+  function stationChime(){ // 駅の案内チャイム風「ピンポン」
+    tone(880,0.55,{type:"sine",vol:0.16,attack:0.005});
+    tone(659,0.7,{type:"sine",vol:0.16,attack:0.005,when:0.42});
+  }
+  function scheduleTrain(){ ambTimers.push(setTimeout(()=>{ trainPass(); scheduleTrain(); }, 16000+Math.random()*30000)); }
+  function trainPass(){ if(!AC) return; const t=AC.currentTime; // 電車通過のゴーという増減
+    const src=AC.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
+    const bp=AC.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=280; bp.Q.value=0.7;
+    const g=AC.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.11,t+1.6);
+    g.gain.setValueAtTime(0.11,t+2.6); g.gain.exponentialRampToValueAtTime(0.0001,t+5);
+    src.connect(bp).connect(g).connect(masterGain); src.start(t); src.stop(t+5.3);
+    tone(1100,1.0,{type:"sawtooth",vol:0.025,attack:0.3,when:2.4,glideTo:520}); // ブレーキのきしみ
+  }
+  function scheduleCrowd(){ ambTimers.push(setTimeout(()=>{ crowdMurmur(); scheduleCrowd(); }, 6000+Math.random()*9000)); }
+  function crowdMurmur(){ if(!AC) return; const t=AC.currentTime; // 人混みのざわめき（短く）
+    const src=AC.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
+    const bp=AC.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=600; bp.Q.value=0.8;
+    const g=AC.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.03,t+0.8); g.gain.exponentialRampToValueAtTime(0.0001,t+2.4);
+    src.connect(bp).connect(g).connect(masterGain); src.start(t); src.stop(t+2.6);
+  }
+  function sfxStep(){ noise(0.10,{vol:0.10,lp:850,hp:120}); }                                   // 足音
+  function sfxAlert(){ tone(440,0.16,{type:"square",vol:0.16}); tone(587,0.22,{type:"square",vol:0.16,when:0.15}); } // 発見
+  function sfxClear(){ [523,659,784,1047].forEach((f,i)=>tone(f,0.5,{type:"triangle",vol:0.2,when:i*0.13})); }      // クリア
+  function sfxOver(){ [392,294,220,165].forEach((f,i)=>tone(f,0.6,{type:"sawtooth",vol:0.18,when:i*0.18})); }        // ゲームオーバー
+  function sfxFloor(){ tone(330,0.16,{type:"sine",vol:0.12}); tone(440,0.18,{type:"sine",vol:0.12,when:0.09}); }     // 階移動
+  function setMute(on){ audioOn=on; if(masterGain) masterGain.gain.value=on?0.5:0; muteBtn.textContent=on?"🔊":"🔇"; }
+  muteBtn.addEventListener("click", e=>{ e.stopPropagation(); setMute(!audioOn); });
 
   // 全体光は床が白飛び(発光)しないよう十分に余裕を持たせる（明るさは無影の天井・出口の空で確保）
   scene.add(new THREE.AmbientLight(0x6a727b, 0.55));
@@ -1275,9 +1348,9 @@ const CONFIG = {
 
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
-  const keys={}; let running=false, locked=false;
+  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false;
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
-    if(k==="m") setMapCollapsed(!mapCollapsed);   // Mでマップ開閉
+    if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
     if(["arrowup","arrowdown","arrowleft","arrowright"].includes(k))e.preventDefault();});
   addEventListener("keyup",e=>{keys[e.key.toLowerCase()]=false;});
 
@@ -1327,24 +1400,32 @@ const CONFIG = {
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
     gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden");
-    if(C.SHOW_MAP){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
+    player.plevel=1;   // 階移動の効果音用
+    const showMap = C.SHOW_MAP && !userMode;   // ユーザープレイ時はマップを消す
+    if(showMap){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
       mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden"); mapToggle.classList.remove("hidden");
       mapLabel.style.top=(66+mapCv.height)+"px"; setMapCollapsed(mapCollapsed); }
+    else { mapCv.classList.add("hidden"); mapLabel.classList.add("hidden"); mapToggle.classList.add("hidden"); }
     startScreen.classList.add("hidden"); resultScreen.classList.add("hidden");
     running=true; if(!isTouch) requestLock();
   }
   function pauseToStart(){ if(!running)return; running=false;
-    startBtn.textContent="クリックして再開"; startScreen.querySelector("h1").textContent="一時停止中";
-    startScreen.classList.remove("hidden"); }
+    startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
-    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); }
+    resultScreen.classList.remove("hidden"); cross.classList.add("hidden");
+    if(cleared) sfxClear(); else sfxOver(); }
 
-  startBtn.addEventListener("click",()=>{
-    if(startScreen.querySelector("h1").textContent==="一時停止中"){ startScreen.classList.add("hidden"); running=true; if(!isTouch)requestLock(); }
-    else startGame();
-  });
-  restartBtn.addEventListener("click",startGame);
+  function beginOrResume(asUser){
+    ensureAudio();
+    if(startScreen.querySelector("h1").textContent==="一時停止中"){ // 一時停止からの再開（モードは維持）
+      startScreen.classList.add("hidden"); running=true; if(!isTouch)requestLock(); return;
+    }
+    userMode=asUser; startGame();
+  }
+  devBtn.addEventListener("click",()=>beginOrResume(false));
+  userBtn.addEventListener("click",()=>beginOrResume(true));
+  restartBtn.addEventListener("click",()=>{ ensureAudio(); startGame(); });
   canvasEl.addEventListener("click",()=>{ if(running&&!isTouch&&!locked) requestLock(); });
 
   // ---------- 移動 ----------
@@ -1369,13 +1450,16 @@ const CONFIG = {
     let mf=0,ms=0;
     if(keys["w"]||keys["arrowup"])mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
+    const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     if(len>0){ vx=vx/len*C.MOVE_SPEED*dt; vz=vz/len*C.MOVE_SPEED*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
+    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; if(stepAcc>=0.42){ stepAcc=0; sfxStep(); } }  // 足音
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
+    if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
     camera.position.set(player.x, player.y+C.EYE_HEIGHT, player.z);
   }
 
@@ -1654,7 +1738,7 @@ const CONFIG = {
 
   // ---------- ミニマップ（現在フロアを表示。階を上がると切り替わる） ----------
   function drawMinimap(){
-    if(!C.SHOW_MAP || mapCollapsed) return; const cs=MAP_CELL;
+    if(!C.SHOW_MAP || mapCollapsed || userMode) return; const cs=MAP_CELL;
     const F=player.level, g=grids[F];
     mapCtx.clearRect(0,0,mapCv.width,mapCv.height);
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
@@ -1716,6 +1800,8 @@ const CONFIG = {
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.showAlert);
+      if(alert && !alertPrev) sfxAlert();   // 新たに見つかった瞬間の音
+      alertPrev = alert;
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
