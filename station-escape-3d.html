@@ -203,7 +203,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.55";
+  const APP_VERSION = "Ver.56";
   versionEl.textContent = APP_VERSION;
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
   if(_touch) document.body.classList.add("is-touch");
@@ -677,28 +677,16 @@ const CONFIG = {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(verts,3));
     worldRoot.add(new THREE.Mesh(geo, yellowMat));
   }
-  // 黄色い誘導線：通路には中央線を引き、広場は格子で埋めず「出入口どうしを縦横の最短L字」で繋ぐだけ
+  // 黄色い誘導線：通路だけ中央線を引く。広場(open)の中には一切引かない（無駄な線・格子を出さない）
   function buildYellowLines(f){
     if(f===1){ buildPlatformYellow(); return; }
     const g=grids[f];
     const isFloor=(x,y)=> x>=0&&y>=0&&x<C.COLS&&y<C.ROWS && g[y][x]===0 && !stairTileSet.has(x+","+y);
-    // 広場(open)=どこかの2x2が全部床に含まれるマス
+    // 広場(open)=どこかの2x2が全部床に含まれるマス（＝開けた場所）
     const open=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(false));
     for(let y=0;y<C.ROWS-1;y++)for(let x=0;x<C.COLS-1;x++){
       if(isFloor(x,y)&&isFloor(x+1,y)&&isFloor(x,y+1)&&isFloor(x+1,y+1)){
         open[y][x]=open[y][x+1]=open[y+1][x]=open[y+1][x+1]=true;
-      }
-    }
-    // 広場の連結成分(region)に番号付け＋各regionの出入口(mouth)を集める
-    const region=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
-    const mouths={}; let rid=0;
-    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      if(open[y][x]&&region[y][x]<0){
-        const q=[[x,y]]; region[y][x]=rid; mouths[rid]=[]; let i=0;
-        while(i<q.length){ const [cx,cy]=q[i++];
-          for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=cx+dx,ny=cy+dy;
-            if(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS&&open[ny][nx]&&region[ny][nx]<0){ region[ny][nx]=rid; q.push([nx,ny]); } } }
-        rid++;
       }
     }
     const h=(f-1)*FH+0.06, wHalf=0.2, verts=[];
@@ -706,34 +694,13 @@ const CONFIG = {
       verts.push(ax+px,h,az+pz, bx+px,h,bz+pz, bx-px,h,bz-pz,
                  ax+px,h,az+pz, bx-px,h,bz-pz, ax-px,h,az-pz); };
     const seg=(x1,y1,x2,y2)=>{ const a=tileToWorld(x1,y1),b=tileToWorld(x2,y2); segWorld(a.x,a.z,b.x,b.z); };
-    // 通路の線＋広場の出入口へのスタブ（広場の内部どうしは引かない）
+    // 通路の中央線のみ。広場どうし(open&&open)の辺は引かない＝広場の中は線なし
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
       if(!isFloor(x,y)) continue;
       for(const [dx,dy] of [[1,0],[0,1]]){ const nx=x+dx,ny=y+dy;
         if(!isFloor(nx,ny)) continue;
-        const ao=open[y][x], bo=open[ny][nx];
-        if(ao&&bo) continue;            // 広場の内部：線を引かない
-        seg(x,y,nx,ny);                 // 通路の線 or 広場入口へのスタブ
-        if(ao&&!bo) mouths[region[y][x]].push([x,y]);
-        if(bo&&!ao) mouths[region[ny][nx]].push([nx,ny]);
-      }
-    }
-    // 各広場：出入口どうしを最短(マンハッタン)でMST接続し、L字(横→縦)で描く
-    for(const r in mouths){
-      const seen=new Set();
-      let ms=mouths[r].filter(m=>{const k=m[0]+","+m[1]; if(seen.has(k))return false; seen.add(k); return true;});
-      if(ms.length<2) continue;
-      const used=[ms[0]], rest=ms.slice(1);
-      while(rest.length){
-        let bi=0,bj=0,bd=1e9;
-        for(let i=0;i<used.length;i++)for(let j=0;j<rest.length;j++){
-          const d=Math.abs(used[i][0]-rest[j][0])+Math.abs(used[i][1]-rest[j][1]);
-          if(d<bd){bd=d;bi=i;bj=j;}
-        }
-        const a=used[bi], b=rest[bj];
-        seg(a[0],a[1], b[0],a[1]);   // 横
-        seg(b[0],a[1], b[0],b[1]);   // 縦
-        used.push(b); rest.splice(bj,1);
+        if(open[y][x] && open[ny][nx]) continue;   // 広場の内部：線を引かない
+        seg(x,y,nx,ny);                            // 通路の線（広場の縁では1マスだけ出る）
       }
     }
     if(!verts.length) return;
