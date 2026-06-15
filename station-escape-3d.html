@@ -206,7 +206,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.61";
+  const APP_VERSION = "Ver.62";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1457,9 +1457,36 @@ const CONFIG = {
     if(L>0.0001) p.ry=Math.atan2(vx,vz);
     return moved;
   }
+  // 人口密度の粗いグリッド（地上・地下1階で「空いている方へ寄る」傾向に使う）
+  const DCELL=4, densW=Math.ceil(C.COLS/DCELL), densH=Math.ceil(C.ROWS/DCELL);
+  let densGrid={}, densAccum=0;
+  function computeDensity(){
+    densGrid={};
+    for(let f=1;f<=NF;f++){ densGrid[f]=Array.from({length:densH},()=>new Array(densW).fill(0)); }
+    for(const p of pedestrians){
+      const cx=Math.max(0,Math.min(densW-1,(p.x/T/DCELL)|0)), cy=Math.max(0,Math.min(densH-1,(p.z/T/DCELL)|0));
+      if(densGrid[p.level]) densGrid[p.level][cy][cx]++;
+    }
+  }
+  // 自分のセルより空いている隣セルがあればその向きを返す（最も空いている方）。無ければ null
+  function lowDensityDir(p){
+    const dg=densGrid[p.level]; if(!dg) return null;
+    const cx=(p.x/T/DCELL)|0, cy=(p.z/T/DCELL)|0;
+    if(cx<0||cy<0||cx>=densW||cy>=densH) return null;
+    let bx=0,bz=0,bd=dg[cy][cx];
+    for(const [dx,dy] of DIRS4){ const nx=cx+dx,ny=cy+dy;
+      if(nx<0||ny<0||nx>=densW||ny>=densH) continue;
+      if(dg[ny][nx]<bd){ bd=dg[ny][nx]; bx=dx; bz=dy; } }
+    if(bx===0&&bz===0) return null;   // 自分のセルが一番空いている→そのまま
+    return Math.atan2(bz,bx);
+  }
   function wanderStep(p, dt){
     p.timer-=dt;
-    if(p.timer<=0){ p.dir=Math.random()*6.28; p.timer=1.5+Math.random()*3;
+    if(p.timer<=0){
+      let nd=null;
+      if(p.level===2 || p.level===NF) nd=lowDensityDir(p);     // 地上/地下1階は空いている方へ寄る傾向
+      p.dir = (nd!==null && Math.random()<0.6) ? nd+(Math.random()-0.5)*0.9 : Math.random()*6.28;
+      p.timer=1.5+Math.random()*3;
       if(p.rush<=0 && Math.random()<C.PED_RUSH_CHANCE) p.rush=1.2+Math.random()*1.8; }
     if(p.rush>0) p.rush-=dt;
     if(!pedMoveDir(p, Math.cos(p.dir), Math.sin(p.dir), dt, false)){ p.dir=Math.random()*6.28; p.timer=0.5; }
@@ -1519,6 +1546,7 @@ const CONFIG = {
   function updatePedestrians(dt){
     balAccum+=dt;
     if(balAccum>=0.5){ balAccum=0; balancePedestrians(); }
+    densAccum+=dt; if(densAccum>=0.4){ densAccum=0; computeDensity(); }   // 人口密度を更新（空いている方へ寄る用）
     // 各階段の混雑度を集計（pickStair=総需要で分散 / キャップ=実際に乗っている人数）
     stairLoad=new Array(stairs.length).fill(0);
     stairRiders=new Array(stairs.length).fill(0);
