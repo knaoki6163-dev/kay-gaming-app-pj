@@ -215,7 +215,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.66";
+  const APP_VERSION = "Ver.67";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1065,8 +1065,9 @@ const CONFIG = {
       const m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9), kioskMat);
       m.position.set(k.x, (NF-1)*FH + FH*0.35, k.z); worldRoot.add(m);
     }
-    // 地上の全出口へ向かう経路場（外周の出入りを激しくする）
-    exitField = exits.length ? bfsField(NF, exits.map(e=>[e.tx,e.ty])) : null;
+    computeObsBlock();   // 売店などのタイルを記録（敵の巡回経路が避ける）
+    // 地上の全出口へ向かう経路場（外周の出入りを激しくする。売店は避ける）
+    exitField = exits.length ? bfsField(NF, exits.map(e=>[e.tx,e.ty]), obsBlock[NF]) : null;
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     pedPool={};
@@ -1119,8 +1120,8 @@ const CONFIG = {
     if(exitField.step[ty][tx]>=0){ const dd=DIRS4[exitField.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]); pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false); }
     else wanderStep(p, dt);
   }
-  // フロー場(BFS)。階段ごとに「その階段の昇降口へ向かう一歩」を持つ＝目的の階段を選べる
-  function bfsField(f,targets){
+  // フロー場(BFS)。block=避けたいタイル集合(柱/売店など)を渡すとそこを通らない経路になる
+  function bfsField(f,targets,block){
     const dist=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
     const step=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1));
     const q=[];
@@ -1131,6 +1132,7 @@ const CONFIG = {
       for(let d=0;d<4;d++){ const nx=x+DIRS4[d][0], ny=y+DIRS4[d][1];
         if(nx<0||ny<0||nx>=C.COLS||ny>=C.ROWS) continue;
         if(grids[f][ny][nx]!==0 || stairTileSet.has(nx+","+ny)) continue;  // 壁・階段の上は通さない
+        if(block && block.has(nx+","+ny)) continue;                       // 柱/売店などの上も通さない
         if(dist[ny][nx]>=0) continue;
         dist[ny][nx]=dist[y][x]+1; step[ny][nx]=(d^1);  // (nx,ny)から見て(x,y)へ向かう向き
         q.push([nx,ny]);
@@ -1138,13 +1140,21 @@ const CONFIG = {
     }
     return {dist,step};
   }
+  // フロアごとの「大きい障害物（売店/売店大）が乗っているタイル」集合（敵の巡回経路が避ける）
+  let obsBlock={};
+  function computeObsBlock(){
+    obsBlock={};
+    const add=(f,wx,wz)=>{ const tx=Math.floor(wx/T), ty=Math.floor(wz/T); (obsBlock[f]=obsBlock[f]||new Set()).add(tx+","+ty); };
+    for(const o of platObstacles){ if(o.r>=1.5) add(1,o.x,o.z); }       // 地下2階の売店など大きいもの
+    for(const k of groundKiosks){ add(NF,k.x,k.z); }                    // 地上の売店
+  }
   // flowFields["<floor>_<stairId>"]: そのフロアからその階段へ向かう経路場
   function buildFlowFields(){
     flowFields={};
     stairs.forEach((s,i)=>{
-      if(s.lvl===2){ flowFields[(NF)+"_"+i]=bfsField(NF,[s.exit]);  // 地上→その階段(降り口)
+      if(s.lvl===2){ flowFields[(NF)+"_"+i]=bfsField(NF,[s.exit],obsBlock[NF]);  // 地上→その階段(降り口)
                      flowFields["2_"+i]=bfsField(2,[s.entry]); }    // 地下1階→その階段(上り口)
-      else if(s.lvl===1){ flowFields["1_"+i]=bfsField(1,[s.entry]);  // 地下2階→その階段(上り口)
+      else if(s.lvl===1){ flowFields["1_"+i]=bfsField(1,[s.entry],obsBlock[1]);  // 地下2階→その階段(上り口)
                           flowFields["2_"+i]=bfsField(2,[s.exit]); } // 地下1階→その階段(降り口)＝敵の下り移動用
     });
   }
@@ -1480,26 +1490,29 @@ const CONFIG = {
 
   // 巡回の目標（遠い到達可能タイル）を選び、そこへ向かう経路場を作る＝フロアを大きく巡回
   function newPatrolTarget(chaser){
-    const f=chaser.level, tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T);
+    const f=chaser.level, tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T), blk=obsBlock[f];
     if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS) return;
-    const fromEnemy=bfsField(f,[[tx,ty]]);          // 敵からの距離
+    const fromEnemy=bfsField(f,[[tx,ty]],blk);          // 敵からの距離（売店などは避ける）
     let far=[];
     for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){ if(fromEnemy.dist[y][x]>=12) far.push([x,y]); }
     if(!far.length){ for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){ if(fromEnemy.dist[y][x]>=2) far.push([x,y]); } }
     if(!far.length) return;
     const t=far[(Math.random()*far.length)|0];
-    chaser.patField=bfsField(f,[[t[0],t[1]]]); chaser.patReached=false;
+    chaser.patField=bfsField(f,[[t[0],t[1]]],blk); chaser.patReached=false;
   }
   function patrolStep(chaser, dt){
     if(!chaser.patField || chaser.patReached){ newPatrolTarget(chaser); }
     const ff=chaser.patField;
     const tx=Math.floor(chaser.x/T), ty=Math.floor(chaser.z/T);
     const d=(ff && tx>=0&&ty>=0&&tx<C.COLS&&ty<C.ROWS)? ff.dist[ty][tx] : -1;
-    if(d>=0 && d<=1){ chaser.patReached=true; return; }                    // 到着→次の巡回先
+    if(ff && d>=0 && d<=1){ chaser.patReached=true; return; }                    // 到着→次の巡回先
     if(ff && d>=0 && ff.step[ty][tx]>=0){ const dd=DIRS4[ff.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]);
       moveToward(chaser, tw.x, tw.z, C.CHASER_WANDER, dt, CHASER_R); }
-    else { chaser.patReached=true; return; }
-    if(chaser.x===chaser._px && chaser.z===chaser._pz){ chaser._stuck+=dt; if(chaser._stuck>1.0){ chaser.patReached=true; chaser._stuck=0; } } else chaser._stuck=0;
+    else { // 経路場が無い/外れた→ランダム方向に歩いて次の目標を引く（絶対に止まらない）
+      if(chaser.dir==null) chaser.dir=Math.random()*6.28;
+      moveToward(chaser, chaser.x+Math.cos(chaser.dir)*4, chaser.z+Math.sin(chaser.dir)*4, C.CHASER_WANDER, dt, CHASER_R);
+      chaser.patReached=true;
+    }
   }
   // フロア間移動（巡回先ではなく階段へ向かい渡る）
   function enemyStair(x,z,f,dir){
@@ -1568,7 +1581,16 @@ const CONFIG = {
         chaser.floorTimer-=dt;
         patrolStep(chaser, dt);
       }
-      const mvx=chaser.x-chaser._px, mvz=chaser.z-chaser._pz;
+      let mvx=chaser.x-chaser._px, mvz=chaser.z-chaser._pz;
+      // どのモードでも「止まり続けない」安全策：0.5秒動けなければランダムに押し出す（柱/売店などに詰まっても解消）
+      if(Math.hypot(mvx,mvz)<0.002){
+        chaser._stuck=(chaser._stuck||0)+dt;
+        if(chaser._stuck>0.5){ chaser._stuck=0; const a=Math.random()*6.28;
+          moveToward(chaser, chaser.x+Math.cos(a)*4, chaser.z+Math.sin(a)*4, C.CHASER_WANDER, dt, CHASER_R);
+          chaser.dir=a; chaser.patReached=true;
+          mvx=chaser.x-chaser._px; mvz=chaser.z-chaser._pz;
+        }
+      } else chaser._stuck=0;
       chaser._px=chaser.x; chaser._pz=chaser.z;
 
       const si=stairInfo(chaser.x,chaser.z,chaser.level);
