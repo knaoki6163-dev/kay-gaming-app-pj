@@ -206,7 +206,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.60";
+  const APP_VERSION = "Ver.61";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -649,6 +649,7 @@ const CONFIG = {
   let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
   let groundKiosks=[];  // 地上の売店（円の当たり判定＋来客の目的地）
   let kioskFields={};   // 各売店への経路場
+  let exitField=null;   // 地上の全出口へ向かう経路場（出入りを激しくする用）
   function obstacleHit(x,z,extra,f){
     const list = (f===1) ? platObstacles : (f===NF ? groundKiosks : null);
     if(!list) return false;
@@ -985,6 +986,8 @@ const CONFIG = {
       const m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9), kioskMat);
       m.position.set(k.x, (NF-1)*FH + FH*0.35, k.z); worldRoot.add(m);
     }
+    // 地上の全出口へ向かう経路場（外周の出入りを激しくする）
+    exitField = exits.length ? bfsField(NF, exits.map(e=>[e.tx,e.ty])) : null;
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     pedPool={};
@@ -1012,15 +1015,30 @@ const CONFIG = {
     balAccum=0;
     buildPedInstances();   // 大量の歩行者をインスタンス描画で軽量に
   }
-  // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動 / 'K'=売店へ出入り（地上のみ・半分）
+  // 歩行者の役割: 'W'=徘徊 / 'M'=フロア間移動 / 'K'=売店へ出入り / 'E'=出口へ出入り（K,Eは地上のみ）
   function setPedRole(p){
     p.ride=null; p.visit=0;
-    if(p.level===NF && groundKiosks.length && Math.random()<0.5){   // 地上の半分は売店へ
-      const ki=pickKiosk(p);
-      if(ki>=0){ p.kind="K"; p.ktarget=ki; p.trip=-1; return; }
+    if(p.level===NF){
+      const r=Math.random();
+      if(r<0.4 && groundKiosks.length){ const ki=pickKiosk(p); if(ki>=0){ p.kind="K"; p.ktarget=ki; p.trip=-1; return; } }
+      if(r<0.8 && exitField){ p.kind="E"; p.trip=-1; return; }   // 地上の約4割は出口へ出入り
     }
     if(Math.random()<0.5){ p.kind="M"; p.trip=pickStair(p); p.goal=(p.trip>=0)?p.level+((p.level===NF)?-1:1):0; if(p.trip<0) p.kind="W"; }
     else { p.kind="W"; p.goal=0; p.trip=-1; }
+  }
+  // 出口へ向かい、着いたら別の出口から入り直す＝外周の出入りを激しく見せる
+  function exitStep(p, dt){
+    if(!exitField || !exits.length){ p.kind="W"; wanderStep(p,dt); return; }
+    const tx=Math.floor(p.x/T), ty=Math.floor(p.z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS){ wanderStep(p,dt); return; }
+    const d=exitField.dist[ty][tx];
+    if(d>=0 && d<=1){   // 出口に到着→外へ出て、別の出口から入り直す
+      const e=exits[(Math.random()*exits.length)|0];
+      p.x=e.sx+(Math.random()-0.5)*T*0.4; p.z=e.sz+(Math.random()-0.5)*T*0.4;
+      p.kind="W"; p.trip=-1; p.roleT=3+Math.random()*5; return;
+    }
+    if(exitField.step[ty][tx]>=0){ const dd=DIRS4[exitField.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]); pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false); }
+    else wanderStep(p, dt);
   }
   // フロー場(BFS)。階段ごとに「その階段の昇降口へ向かう一歩」を持つ＝目的の階段を選べる
   function bfsField(f,targets){
@@ -1452,8 +1470,12 @@ const CONFIG = {
     if(p.trip<0){ p.trip=pickStair(p); if(p.trip<0){ wanderStep(p,dt); return; } }
     const s=stairs[p.trip], dir=(p.level===NF)?-1:1;
     const fl=fieldAt(p.level, p.trip, p.x, p.z);
-    // 目的の階段に既に多く乗っている時は、階段口から少し離れて待つ＝口に固まらない／プレイヤーの邪魔をしない
-    if((stairRiders[p.trip]||0) > 3 && fl && fl.dist<=2){ pedMoveDir(p, p.x-s.cx, p.z-s.cz, dt, false); return; }
+    // 目的の階段が混雑している時は「諦めて離れる」＝階段口に溜まらない／時間が経っても集中しない
+    if((stairRiders[p.trip]||0) > 3 && fl && fl.dist>=0 && fl.dist<=3){
+      const aw=Math.atan2(p.z-s.cz, p.x-s.cx);
+      p.dir=aw; p.rush=1.3; p.timer=2.5; p.kind="W"; p.trip=-1; p.goal=0; p.roleT=5+Math.random()*7;
+      return;
+    }
     if(fl && fl.dist>=0 && fl.dist<=1){          // 目的の階段の昇降口に到着→階段に乗る
       const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
       p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir,sid:p.trip};
@@ -1504,6 +1526,7 @@ const CONFIG = {
     for(const p of pedestrians){
       if(!p.ride && !(p.kind==="K"&&p.visit>0)){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
       if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
+      else if(p.kind==="E"){ exitStep(p, dt); p.y=(p.level-1)*FH; }
       else if(p.kind==="M"){
         moverStep(p, dt);
         const si=stairInfo(p.x,p.z,p.level);
