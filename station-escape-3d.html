@@ -206,7 +206,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.58";
+  const APP_VERSION = "Ver.59";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -753,18 +753,19 @@ const CONFIG = {
   }
   function buildDeptEntrances(f){
     deptDoors=[];
-    const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+    // デパートは「外周(建物の外壁)」沿いだけに配置する（マップ中央の迷路壁には置かない）
+    const peri=[];
+    for(let y=2;y<C.ROWS-2;y++){ peri.push([1,y,-1,0]); peri.push([C.COLS-2,y,1,0]); }       // 左右の外壁
+    for(let x=2;x<C.COLS-2;x++){ peri.push([x,1,0,-1]); peri.push([x,C.ROWS-2,0,1]); }         // 上下の外壁
     const cand=[];
-    for(let y=2;y<C.ROWS-2;y++)for(let x=2;x<C.COLS-2;x++){
-      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
-      for(const [dx,dy] of dirs){
-        if(!gWall(f,x+dx,y+dy)) continue;
-        // 横幅3マスぶん、後ろが平らな壁になっている所だけ（幅広の改札用に）
-        const px=(dx===0)?1:0, py=(dy===0)?1:0;
-        if(!gWall(f,x+dx+px,y+dy+py) || !gWall(f,x+dx-px,y+dy-py)) continue;
-        if(stairTileSet.has((x+px)+","+(y+py))||stairTileSet.has((x-px)+","+(y-py))) continue;
-        cand.push({x,y,dx,dy,px,py}); break;
-      }
+    for(const [x,y,dx,dy] of peri){
+      if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;   // 構内側が床、階段でない
+      if(!gWall(f,x+dx,y+dy)) continue;                              // 背後が外壁
+      // 横幅3マスぶん、後ろが平らな壁になっている所だけ（幅広の出入口用に）
+      const px=(dx===0)?1:0, py=(dy===0)?1:0;
+      if(!gWall(f,x+dx+px,y+dy+py) || !gWall(f,x+dx-px,y+dy-py)) continue;
+      if(stairTileSet.has((x+px)+","+(y+py))||stairTileSet.has((x-px)+","+(y-py))) continue;
+      cand.push({x,y,dx,dy,px,py});
     }
     for(let i=cand.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [cand[i],cand[j]]=[cand[j],cand[i]]; }
     const signMat=new THREE.MeshBasicMaterial({map:deptSignTex(),side:THREE.DoubleSide});
@@ -1254,7 +1255,13 @@ const CONFIG = {
   function playerCanStand(x,z){
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
     if(player.level===1 && obstacleHit(x,z,0.45)) return false;   // 中央の柱など（小さい当たり判定）
-    if(!isStairTileAt(player.x,player.z)){   // 階段上はプレイヤー優先＝通行人で詰まらない（通行人側が退く）
+    // 階段とその周辺ではプレイヤー優先＝通行人で絶対に詰まらない（必ず通れる）
+    let nearStair=isStairTileAt(x,z) || isStairTileAt(player.x,player.z);
+    if(!nearStair){
+      for(const s of stairs){ if(s.lvl===player.level||s.lvl+1===player.level){
+        if(Math.abs(x-s.cx)<T*2.2 && Math.abs(z-s.cz)<T*2.2){ nearStair=true; break; } } }
+    }
+    if(!nearStair){
       for(const p of pedestrians){ if(p.level===player.level && Math.hypot(x-p.x,z-p.z)<PED_R+0.35) return false; }
     }
     return true;
@@ -1377,8 +1384,8 @@ const CONFIG = {
     if(p.trip<0){ p.trip=pickStair(p); if(p.trip<0){ wanderStep(p,dt); return; } }
     const s=stairs[p.trip], dir=(p.level===NF)?-1:1;
     const fl=fieldAt(p.level, p.trip, p.x, p.z);
-    // 目的の階段に既に多く乗っている時は、乗らず近くで待機（徘徊）＝階段に長い列を作らない
-    if((stairRiders[p.trip]||0) > 3 && fl && fl.dist<=2){ wanderStep(p, dt); return; }
+    // 目的の階段に既に多く乗っている時は、階段口から少し離れて待つ＝口に固まらない／プレイヤーの邪魔をしない
+    if((stairRiders[p.trip]||0) > 3 && fl && fl.dist<=2){ pedMoveDir(p, p.x-s.cx, p.z-s.cz, dt, false); return; }
     if(fl && fl.dist>=0 && fl.dist<=1){          // 目的の階段の昇降口に到着→階段に乗る
       const dest=dir>0?s.exit:s.entry, dw=tileToWorld(dest[0],dest[1]);
       p.ride={dx:dw.x,dz:dw.z,goal:p.level+dir,sid:p.trip};
