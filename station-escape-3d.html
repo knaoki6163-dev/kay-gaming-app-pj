@@ -206,7 +206,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.62";
+  const APP_VERSION = "Ver.63";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1090,7 +1090,7 @@ const CONFIG = {
     }
     return best>=0?best:any;   // 直前と別の・空いている階段を優先。無ければ到達可能な最寄り
   }
-  // 地上の広場(open)を見つけ、大きい順に5か所へ地下2階と同じ大きさの売店を置く＋経路場を作る
+  // 地上の売店：中央の広場に5か所（階段の近く・出口(外周)の近くには置かない）
   function findGroundKiosks(){
     groundKiosks=[]; kioskFields={};
     const f=NF, g=grids[f];
@@ -1099,22 +1099,26 @@ const CONFIG = {
     for(let y=0;y<C.ROWS-1;y++)for(let x=0;x<C.COLS-1;x++){
       if(isFloor(x,y)&&isFloor(x+1,y)&&isFloor(x,y+1)&&isFloor(x+1,y+1)){
         open[y][x]=open[y][x+1]=open[y+1][x]=open[y+1][x+1]=true; } }
-    const region=Array.from({length:C.ROWS},()=>new Array(C.COLS).fill(-1)); const regs=[]; let rid=0;
-    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      if(open[y][x]&&region[y][x]<0){ const q=[[x,y]]; region[y][x]=rid; let i=0; const tiles=[];
-        while(i<q.length){ const [cx,cy]=q[i++]; tiles.push([cx,cy]);
-          for(const [dx,dy] of DIRS4){ const nx=cx+dx,ny=cy+dy;
-            if(nx>=0&&ny>=0&&nx<C.COLS&&ny<C.ROWS&&open[ny][nx]&&region[ny][nx]<0){ region[ny][nx]=rid; q.push([nx,ny]); } } }
-        regs.push(tiles); rid++; } }
-    regs.sort((a,b)=>b.length-a.length);
-    for(const tiles of regs){
-      if(groundKiosks.length>=5) break;
-      if(tiles.length<6) continue;                       // 小さすぎる広場には置かない
-      let cx=0,cy=0; for(const [x,y] of tiles){cx+=x;cy+=y;} cx/=tiles.length; cy/=tiles.length;
-      let best=tiles[0],bd=1e9; for(const [x,y] of tiles){ const d=Math.abs(x-cx)+Math.abs(y-cy); if(d<bd){bd=d;best=[x,y];} }
-      const [tx,ty]=best; if(stairTileSet.has(tx+","+ty)) continue;
-      const w=tileToWorld(tx,ty);
-      groundKiosks.push({x:w.x, z:w.z, r:2.0, tx, ty});
+    const cxC=(C.COLS-1)/2, cyC=(C.ROWS-1)/2;          // マップ中央
+    const margin=5;                                    // 外周(出口)からこれだけ離す
+    const stairClear=5;                                // 階段からこれだけ離す（タイル）
+    const stC=stairs.map(s=>[s.cx/T, s.cz/T]);
+    // 中央付近で、階段・外周(出口)から離れた広場タイルを集めて中央に近い順に並べる
+    const cand=[];
+    for(let y=margin;y<C.ROWS-margin;y++)for(let x=margin;x<C.COLS-margin;x++){
+      if(!open[y][x] || stairTileSet.has(x+","+y)) continue;
+      let okS=true; for(const [sx,sy] of stC){ if(Math.hypot(x+0.5-sx,y+0.5-sy)<stairClear){ okS=false; break; } }
+      if(!okS) continue;
+      cand.push({x,y,dc:Math.hypot(x-cxC,y-cyC)});
+    }
+    cand.sort((a,b)=>a.dc-b.dc);                        // 中央に近い順
+    for(let gap=5; gap>=2 && groundKiosks.length<5; gap--){
+      for(const c of cand){
+        if(groundKiosks.length>=5) break;
+        if(groundKiosks.some(k=>Math.abs(k.tx-c.x)+Math.abs(k.ty-c.y)<gap)) continue;
+        const w=tileToWorld(c.x,c.y);
+        groundKiosks.push({x:w.x, z:w.z, r:2.0, tx:c.x, ty:c.y});
+      }
     }
     groundKiosks.forEach((k,i)=>{ kioskFields[i]=bfsField(NF,[[k.tx,k.ty]]); });
   }
