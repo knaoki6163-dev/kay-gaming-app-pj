@@ -70,7 +70,7 @@
   body.is-touch #floor { left:2px; font-size:12px; padding:3px 7px; }
   body.is-touch #map { left:2px; }
   body.is-touch #mapLabel { left:4px; }
-  body.is-touch #hud { top:64px; left:0; right:0; padding:3px 8px; text-align:center; }  /* 上段(現在地/TIME等)と被らないよう下に降ろす */
+  body.is-touch #hud { top:88px; left:0; right:0; padding:3px 14px; text-align:center; }  /* 右上のボタン群(TIME/Ver/🔊)より下へ降ろして被りを解消 */
   body.is-touch #goal { font-size:14px; line-height:1.3; }
   body.is-touch #sub  { font-size:10px; }
 </style>
@@ -171,10 +171,10 @@ const CONFIG = {
 </div>
 
 <div id="start" class="overlay">
-  <h1>駅の出口探索 3D（地下2階〜地上）</h1>
-  <p><b>地下2階</b>からスタート。<b>階段で地上まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から脱出せよ。<br>
-     構内には<b>赤い追跡者</b>がいる。普段は徘徊しているが、<b>こちらを見つけると追ってくる</b>。捕まったらゲームオーバー。</p>
-  <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ <b>Cでしゃがむ</b>（敵に見つかりにくい・人混みに紛れる／酔っ払いを連れている間は不可）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
+  <h1>Exit Shinjuku</h1>
+  <p>酔っ払いを見つけて、地上の出口まで送り届けろ。<br>
+     連れている間は走れない。ヤクザに捕まるな。<br>
+     [WASD]移動 [マウス]視点 [しゃがむ]隠れる</p>
   <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
     <button id="devBtn">開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span></button>
     <button id="userBtn">ユーザーとしてプレイ<br><span style="font-size:12px;opacity:.85">（マップなし）</span></button>
@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.82";
+  const APP_VERSION = "Ver.83";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
