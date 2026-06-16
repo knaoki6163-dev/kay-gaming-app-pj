@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.73";
+  const APP_VERSION = "Ver.74";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1524,18 +1524,17 @@ const CONFIG = {
   // ---------- 移動 ----------
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
+    // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
-    if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店
-    // 階段とその周辺ではプレイヤー優先＝通行人で絶対に詰まらない（必ず通れる）
-    let nearStair=isStairTileAt(x,z) || isStairTileAt(player.x,player.z);
-    if(!nearStair){
-      for(const s of stairs){ if(s.lvl===player.level||s.lvl+1===player.level){
-        if(Math.abs(x-s.cx)<T*2.2 && Math.abs(z-s.cz)<T*2.2){ nearStair=true; break; } } }
-    }
-    if(!nearStair){
-      for(const p of pedestrians){ if(p.level===player.level && Math.hypot(x-p.x,z-p.z)<PED_R+0.35) return false; }
-    }
+    if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
     return true;
+  }
+  // プレイヤー周囲の通行人の密度（人混みで遅くなる＝動きにくいが、止まりはしない。少人数なら減速なし）
+  function crowdDrag(){
+    let near=0;
+    for(const p of pedestrians){ if(p.level===player.level){ const dx=p.x-player.x, dz=p.z-player.z; if(dx*dx+dz*dz<4.0) near++; } } // 2m以内
+    const eff=Math.max(0, near-1);   // 1人くらいは素通り、密集すると減速
+    return 1/(1 + eff*0.4);
   }
   function updatePlayer(dt){
     camera.rotation.set(player.pitch,player.yaw,0);
@@ -1546,7 +1545,7 @@ const CONFIG = {
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    const spd = carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED);
+    const spd = (carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED)) * crowdDrag(); // 人混みで減速
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
