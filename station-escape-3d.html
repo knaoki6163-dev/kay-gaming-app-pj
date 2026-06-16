@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.77";
+  const APP_VERSION = "Ver.78";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -349,7 +349,22 @@ const CONFIG = {
       for(let y=0;y<o.div;y++)for(let x=0;x<o.div;x++) g.fillRect(x*step+o.line,y*step+o.line,step*0.28,step*0.18); }
     const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t;
   }
-  const wallTex  = makeTileTexture({base:"#c2c7cc",grout:"#7c828a",line:6,div:4,sheen:true});
+  function makeWallTexture(){   // 駅らしいタイル壁（大判タイル＋目地＋艶＋汚れ）
+    const s=256, cv=document.createElement("canvas"); cv.width=cv.height=s; const g=cv.getContext("2d");
+    g.fillStyle="#cdd2d7"; g.fillRect(0,0,s,s);
+    const div=4, step=s/div;
+    for(let r=0;r<div;r++)for(let c=0;c<div;c++){
+      const v=(Math.random()*12-6)|0;
+      g.fillStyle="rgb("+(203+v)+","+(208+v)+","+(213+v)+")"; g.fillRect(c*step+2,r*step+2,step-4,step-4);
+      g.fillStyle="rgba(255,255,255,0.10)"; g.fillRect(c*step+4,r*step+4,step*0.45,step*0.12); // 艶
+    }
+    g.strokeStyle="#9aa1a8"; g.lineWidth=5;
+    for(let i=0;i<=div;i++){ g.beginPath();g.moveTo(i*step,0);g.lineTo(i*step,s);g.stroke(); g.beginPath();g.moveTo(0,i*step);g.lineTo(s,i*step);g.stroke(); }
+    g.strokeStyle="rgba(120,128,135,0.10)"; g.lineWidth=2;
+    for(let k=0;k<6;k++){ const x=Math.random()*s; g.beginPath(); g.moveTo(x,0); g.lineTo(x+(Math.random()*8-4),s); g.stroke(); } // 汚れ筋
+    const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t;
+  }
+  const wallTex  = makeWallTexture();
   const floorTex = makeTileTexture({base:"#dcc6a0",grout:"#b4986a",line:7,div:2,sheen:false}); // 床=肌色(ベージュ)
   const ceilTex  = makeTileTexture({base:"#d6dade",grout:"#b3b8bd",line:5,div:3,sheen:false}); // 天井=壁より少し明るいグレー
   wallTex.repeat.set(2,2);
@@ -711,19 +726,53 @@ const CONFIG = {
   const rampMat=new THREE.MeshLambertMaterial({color:0x8a9098});  // 3Dの階段はグレー（色はマップ側のみ）
   const yellowMat=new THREE.MeshBasicMaterial({color:0xf2c500,side:THREE.DoubleSide,toneMapped:false}); // 駅の黄色い誘導線
   // 壁の看板・ポスター（数種をあらかじめ生成して使い回す）
-  function makePosterTexture(p){
+  function makePosterTexture(p){   // 駅の広告ポスター風（ヘッダー帯＋ビジュアル枠＋本文）
     const w=256,h=320,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
-    g.fillStyle=p[0];g.fillRect(0,0,w,h);
-    g.strokeStyle="rgba(255,255,255,0.5)";g.lineWidth=8;g.strokeRect(10,10,w-20,h-20);
-    g.fillStyle=p[1];g.textAlign="center";g.textBaseline="middle";
-    g.font="bold 70px sans-serif";g.fillText(p[2],w/2,h*0.40);
-    g.font="bold 38px sans-serif";g.fillText(p[3],w/2,h*0.66);
+    g.fillStyle="#ffffff"; g.fillRect(0,0,w,h);
+    g.fillStyle=p[0]; g.fillRect(8,8,w-16,72);                          // ヘッダー帯
+    g.fillStyle=p[1]; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 46px sans-serif"; g.fillText(p[2],w/2,44);
+    const ig=g.createLinearGradient(0,90,0,214); ig.addColorStop(0,"#eef2f6"); ig.addColorStop(1,"#cbd4dc");
+    g.fillStyle=ig; g.fillRect(20,92,w-40,124);                         // ビジュアル枠
+    g.fillStyle=p[0]; g.beginPath(); g.arc(w/2,150,38,0,6.28); g.fill();
+    g.fillStyle="rgba(255,255,255,0.55)"; g.beginPath(); g.arc(w/2-12,138,12,0,6.28); g.fill();
+    g.fillStyle="#333"; g.font="bold 30px sans-serif"; g.fillText(p[3],w/2,242);
+    g.fillStyle="#bbb"; g.fillRect(40,268,w-80,6); g.fillRect(64,284,w-128,6); g.fillRect(80,300,w-160,6);
+    g.strokeStyle="#dadfe4"; g.lineWidth=4; g.strokeRect(4,4,w-8,h-8);
     const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;
   }
   const posterDefs=[["#f4c20d","#222","出口","EXIT →"],["#1f6fb2","#fff","のりば","1・2番線"],
-    ["#c0392b","#fff","SALE","半額セール"],["#2e8b57","#fff","ご案内","INFORMATION"],
-    ["#7d3c98","#fff","ご注意","足元注意"],["#2c3e50","#fff","時刻表","TIMETABLE"],
-    ["#e67e22","#fff","CAFE","OPEN 7-22"],["#16a085","#fff","お手洗い","TOILET →"]];
+    ["#c0392b","#fff","SALE","半額セール開催中"],["#2e8b57","#fff","ご案内","INFORMATION"],
+    ["#7d3c98","#fff","新商品","NEW ARRIVAL"],["#2c3e50","#fff","時刻表","TIMETABLE"],
+    ["#e67e22","#fff","CAFE","OPEN 7:00-22:00"],["#16a085","#fff","お手洗い","TOILET →"],
+    ["#d6336c","#fff","映画","公開中"],["#3b5bdb","#fff","保険","ご相談ください"]];
+  // 店舗（売店/KIOSK）の見た目用テクスチャ
+  let _shelfTexC=null, _kioskSignTexC=null;
+  function shelfTex(){
+    const w=128,h=96,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle="#23272c"; g.fillRect(0,0,w,h);
+    for(let s=0;s<3;s++){ const y=20+s*28;
+      g.fillStyle="#454c53"; g.fillRect(4,y+2,w-8,4);                    // 棚板
+      let x=8; while(x<w-14){ const pw=8+(Math.random()*10)|0, ph=14+(Math.random()*8)|0;
+        g.fillStyle="hsl("+((Math.random()*360)|0)+",62%,56%)"; g.fillRect(x,y-ph+2,pw,ph); x+=pw+3; } }
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function kioskSignTex(){
+    const w=256,h=64,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle="#c0392b"; g.fillRect(0,0,w,h); g.fillStyle="#fff"; g.fillRect(0,h-6,w,6);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 34px sans-serif"; g.fillText("売店  KIOSK",w/2,30);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildKiosk(cx,cz,baseY){   // 地下2階/地上 共通の店舗（カウンター＋陳列棚＋看板＋テント屋根）
+    if(!_shelfTexC) _shelfTexC=shelfTex(); if(!_kioskSignTexC) _kioskSignTexC=kioskSignTex();
+    const g=new THREE.Group(), W=T*0.86, H=FH*0.7, D=T*0.86;
+    const base=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.46,D), new THREE.MeshLambertMaterial({color:0x39424a})); base.position.y=H*0.23; g.add(base);
+    const glassM=new THREE.MeshBasicMaterial({map:_shelfTexC}); glassM.toneMapped=false;
+    const glass=new THREE.Mesh(new THREE.BoxGeometry(W*0.99,H*0.32,D*0.99), glassM); glass.position.y=H*0.46+H*0.16; g.add(glass);
+    const signM=new THREE.MeshBasicMaterial({map:_kioskSignTexC}); signM.toneMapped=false;
+    const sign=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.2,D), signM); sign.position.y=H*0.46+H*0.32+H*0.10; g.add(sign);
+    const awn=new THREE.Mesh(new THREE.BoxGeometry(W*1.16,0.14,D*1.16), new THREE.MeshLambertMaterial({color:0xb33326})); awn.position.y=H+0.05; g.add(awn);
+    g.position.set(cx,baseY,cz); return g;
+  }
   const posterMats=posterDefs.map(p=>new THREE.MeshBasicMaterial({map:makePosterTexture(p)}));
   const posterGeo=new THREE.PlaneGeometry(1.7,2.1);
   // 地下2階プラットホーム用の小物
@@ -918,7 +967,7 @@ const CONFIG = {
       for(const y of OBJ_ROWS){
         const w=tileToWorld(xc,y); const t=objType(y); let m,r;
         if(t==="pillar"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.6,FH,0.6),pillarMat); m.position.set(w.x,FH/2,w.z); r=0.32; }
-        else if(t==="kiosk"){ m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9),kioskMat); m.position.set(w.x,FH*0.35,w.z); r=2.0; } // 人より大きい遮蔽物
+        else if(t==="kiosk"){ m=buildKiosk(w.x,0,w.z); r=2.0; } // 人より大きい遮蔽物（店舗）
         else if(t==="trash"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.0,0.7),trashMat); m.position.set(w.x,0.5,w.z); r=0.36; }
         else { m=new THREE.Mesh(new THREE.BoxGeometry(T*0.7,1.7,0.16),signMat); m.position.set(w.x,1.6,w.z); r=0.4; }
         worldRoot.add(m);
@@ -1130,8 +1179,7 @@ const CONFIG = {
     // 地上の売店（広場の中央に最大7か所。地下2階と同じ大きさ。来客の「出入り」先）
     findGroundKiosks();
     for(const k of groundKiosks){
-      const m=new THREE.Mesh(new THREE.BoxGeometry(T*0.9,FH*0.7,T*0.9), kioskMat);
-      m.position.set(k.x, (NF-1)*FH + FH*0.35, k.z); worldRoot.add(m);
+      worldRoot.add(buildKiosk(k.x, (NF-1)*FH, k.z));
     }
     computeObsBlock();   // 売店などのタイルを記録（敵の巡回経路が避ける）
     // 地上の全出口へ向かう経路場（外周の出入りを激しくする。売店は避ける）
