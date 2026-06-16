@@ -52,6 +52,8 @@
     border:none; border-radius:8px; background:#4a90e2; color:#fff; }
   .clear { color:#5fd36a; } .over { color:#e25555; }
   #version { margin-top:16px; font-size:18px; font-weight:bold; color:#9aa3ad; letter-spacing:.5px; }
+  #resultInfo { margin-top:10px; font-size:20px; color:#e6ebf1; line-height:1.7; }
+  #resultInfo b { color:#ffe27a; font-size:24px; }
 
   #touch { position:fixed; inset:0; z-index:5; display:none; }
   #pad { position:absolute; left:18px; bottom:18px; display:grid;
@@ -176,6 +178,7 @@ const CONFIG = {
 
 <div id="result" class="overlay hidden">
   <h1 id="resultText"></h1>
+  <div id="resultInfo"></div>
   <button id="restartBtn">もう一度</button>
 </div>
 
@@ -213,6 +216,7 @@ const CONFIG = {
   const muteBtn = document.getElementById("muteBtn");
   const resultScreen = document.getElementById("result");
   const resultText = document.getElementById("resultText");
+  const resultInfo = document.getElementById("resultInfo");
   const restartBtn = document.getElementById("restartBtn");
   const touch = document.getElementById("touch");
   const mapCv = document.getElementById("map");
@@ -233,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.72";
+  const APP_VERSION = "Ver.73";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1492,6 +1496,16 @@ const CONFIG = {
     startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
+    if(cleared){
+      const t=gameTime, score=Math.round(600000/(t+30));                 // 早いほど高得点（時間制限なし）
+      const rank = t<60?"S":t<100?"A":t<160?"B":t<240?"C":"D";
+      let best=0; try{ best=parseInt(localStorage.getItem("station_best_score"))||0; }catch(e){}
+      const isBest = score>best; if(isBest){ try{ localStorage.setItem("station_best_score", String(score)); }catch(e){} }
+      resultInfo.innerHTML = "送り届け成功！　タイム "+fmtTime(t)+"　/　スコア <b>"+score+"</b>　ランク <b>"+rank+"</b>"
+        + (best||isBest ? "<br><span style='font-size:15px;color:#9aa3ad'>ベスト "+(isBest?(score+"　★更新！"):best)+"</span>" : "");
+    } else {
+      resultInfo.innerHTML = "タイム "+fmtTime(gameTime);
+    }
     resultScreen.classList.remove("hidden"); cross.classList.add("hidden");
     if(cleared) sfxClear(); else sfxOver(); }
 
