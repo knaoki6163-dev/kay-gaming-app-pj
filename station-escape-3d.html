@@ -233,7 +233,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.71";
+  const APP_VERSION = "Ver.72";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -686,6 +686,7 @@ const CONFIG = {
   let exits=[], correctExitNo=1, chasers=[], pedestrians=[], chaserTargets={};
   let deptDoors=[], trainDoors=[];      // 各フロアの「人の出入り口」: B1=デパート, B2=電車ドア
   let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
+  let upField={};   // 各地下フロアから上の階段へ向かう経路場（案内看板の正しい向きの判定用）
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0; // 運搬ジレンマ用
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
@@ -1089,6 +1090,7 @@ const CONFIG = {
     computeObsBlock();   // 売店などのタイルを記録（敵の巡回経路が避ける）
     // 地上の全出口へ向かう経路場（外周の出入りを激しくする。売店は避ける）
     exitField = exits.length ? bfsField(NF, exits.map(e=>[e.tx,e.ty]), obsBlock[NF]) : null;
+    buildUpFields(); placeGuideSigns();   // 案内看板（一部は偽物）を設置
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
     pedPool={};
@@ -1169,6 +1171,50 @@ const CONFIG = {
     const add=(f,wx,wz)=>{ const tx=Math.floor(wx/T), ty=Math.floor(wz/T); (obsBlock[f]=obsBlock[f]||new Set()).add(tx+","+ty); };
     for(const o of platObstacles){ if(o.r>=1.5) add(1,o.x,o.z); }       // 地下2階の売店など大きいもの
     for(const k of groundKiosks){ add(NF,k.x,k.z); }                    // 地上の売店
+  }
+  // ---------- 迷わせ要素：案内看板（一部は偽物＝矢印が誤った方向を指す） ----------
+  function buildUpFields(){   // 各地下フロアから「上の階段」へ向かう経路場（看板の正しい向き判定用）
+    upField={};
+    for(let f=1;f<NF;f++){ const ent=[]; for(const s of stairs){ if(s.lvl===f) ent.push(s.entry); }
+      if(ent.length) upField[f]=bfsField(f, ent, obsBlock[f]); }
+  }
+  function guideSignTex(){
+    const cv=document.createElement("canvas"); cv.width=192; cv.height=96; const g=cv.getContext("2d");
+    g.fillStyle="#0f7a39"; g.fillRect(0,0,192,96); g.strokeStyle="#fff"; g.lineWidth=5; g.strokeRect(5,5,182,86);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 52px sans-serif"; g.fillText("出口",96,52);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  let guideSignTexCache=null;
+  function makeGuideArrow(){   // +X方向を指す緑の矢印＋「出口」看板（本物/偽物とも同じ見た目）
+    const grp=new THREE.Group();
+    const mat=new THREE.MeshBasicMaterial({color:0x16a34a}); mat.toneMapped=false;
+    grp.add(new THREE.Mesh(new THREE.BoxGeometry(1.7,0.06,0.5), mat));
+    const head=new THREE.Mesh(new THREE.ConeGeometry(0.6,1.0,4), mat); head.rotation.z=-Math.PI/2; head.position.x=1.15; grp.add(head);
+    if(!guideSignTexCache) guideSignTexCache=guideSignTex();
+    const sign=new THREE.Mesh(new THREE.PlaneGeometry(1.4,0.7), new THREE.MeshBasicMaterial({map:guideSignTexCache,side:THREE.DoubleSide,transparent:true}));
+    sign.material.toneMapped=false; sign.position.set(-0.2,1.8,0); grp.add(sign);
+    return grp;
+  }
+  function placeGuideSigns(){
+    for(let f=1;f<=NF;f++){
+      const field = f===NF ? exitField : upField[f];
+      if(!field) continue;
+      let tiles=allFloorTiles(f).filter(t=> !stairTileSet.has(t.x+","+t.y)
+        && !(obsBlock[f]&&obsBlock[f].has(t.x+","+t.y)) && field.step[t.y] && field.step[t.y][t.x]>=0);
+      for(let i=tiles.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [tiles[i],tiles[j]]=[tiles[j],tiles[i]]; }
+      const placed=[];
+      for(const t of tiles){
+        if(placed.length>=10) break;
+        if(placed.some(p=>Math.abs(p.x-t.x)+Math.abs(p.y-t.y)<6)) continue;
+        placed.push(t);
+        const genIdx=field.step[t.y][t.x];                     // 本物が指すべき方向
+        let idx=genIdx;
+        if(Math.random()<0.33){ const opts=[0,1,2,3].filter(k=>k!==genIdx); idx=opts[(Math.random()*opts.length)|0]; } // 約1/3は偽物
+        const d=DIRS4[idx], w=tileToWorld(t.x,t.y), grp=makeGuideArrow();
+        grp.position.set(w.x,(f-1)*FH+0.07,w.z); grp.rotation.y=Math.atan2(-d[1], d[0]);
+        worldRoot.add(grp);
+      }
+    }
   }
   // flowFields["<floor>_<stairId>"]: そのフロアからその階段へ向かう経路場
   function buildFlowFields(){
