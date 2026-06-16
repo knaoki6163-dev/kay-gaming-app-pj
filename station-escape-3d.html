@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.75";
+  const APP_VERSION = "Ver.76";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1652,7 +1652,7 @@ const CONFIG = {
       if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
       let see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
       if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
-      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=C.CHASER_MEMORY; }
+      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY); }
       else if(chaser.mem>0) chaser.mem-=dt;
       // 追跡は「巡回中＆同フロア」のみ（移動中=transitは横断に専念）。スピードは従来どおり
       const chasing = chaser.mode==="patrol" && same && chaser.mem>0;
@@ -1896,7 +1896,8 @@ const CONFIG = {
   function resetToiletUrge(){ toiletState="none"; toiletT=C.TOILET_INTERVAL_MIN+Math.random()*(C.TOILET_INTERVAL_MAX-C.TOILET_INTERVAL_MIN); setToiletBeacons(false); }
   function updateToiletUrge(dt){
     if(!drunk) return;
-    if(!carrying){ if(toiletState!=="none"){ toiletState="none"; setToiletBeacons(false); } updateToiletMeter(); return; }
+    if(!carrying){ updateToiletMeter(); return; }   // 連れていない間は尿意を“止める”（リセットしない＝ドロップ&再取得での回避を防止）
+    if(drunk.stopT>0){ updateToiletMeter(); return; } // コンビニで足止め中は尿意も進めない（猶予を不当に削らない）
     if(toiletState==="none"){
       toiletT-=dt;
       if(toiletT<=0){ toiletState="warn"; toiletT=C.TOILET_WARN; setToiletBeacons(true); setDrunkMsg("酔っ払いがソワソワし始めた…トイレが近いぞ！",3); sfxAlert(); }
@@ -1958,7 +1959,8 @@ const CONFIG = {
     drunk.sway+=dt*4; if(drunkMsgT>0) drunkMsgT-=dt;
     if(!carrying){
       if(drunk.level===player.level && Math.hypot(player.x-drunk.x,player.z-drunk.z)<C.DRUNK_TOUCH){
-        carrying=true; playerTrail=[]; if(drunk.beacon) drunk.beacon.visible=false; resetToiletUrge();
+        carrying=true; playerTrail=[]; if(drunk.beacon) drunk.beacon.visible=false;
+        if(toiletState==="none") resetToiletUrge();   // 尿意が保留中なら引き継ぐ（ドロップで時計を巻き戻せない）
         setDrunkMsg("酔っ払いを連れた！地上の正しい出口へ送り届けろ",3.5); sfxFloor();
       }
     } else {
@@ -2025,7 +2027,7 @@ const CONFIG = {
     // 現在フロアの歩行者・敵だけ表示
     mapCtx.fillStyle="#9aa1aa";
     for(const p of pedestrians){ if(p.level!==F) continue; mapCtx.beginPath(); mapCtx.arc((p.x/T)*cs,(p.z/T)*cs,cs*0.16,0,6.28); mapCtx.fill(); }
-    for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=(chaser.mem>0||chaser.hunt)?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
+    for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=chaser.showAlert?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
       mapCtx.arc((chaser.x/T)*cs,(chaser.z/T)*cs,cs*0.4,0,6.28); mapCtx.fill(); }
     const px=(player.x/T)*cs, py=(player.z/T)*cs;
     mapCtx.strokeStyle="#1f6dd0"; mapCtx.lineWidth=2; mapCtx.beginPath();
