@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.86";
+  const APP_VERSION = "Ver.87";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2080,9 +2080,9 @@ const CONFIG = {
   }
   function buildToilets(){
     toilets=[];
-    for(let f=1;f<=NF;f++)for(let n=0;n<3;n++){   // 各フロアに3か所ずつ（猶予内に着きやすく）
+    for(let f=1;f<=NF;f++)for(let n=0;n<16;n++){   // 各フロアに多めに（猶予内に着きやすく）
       const tk=randUndergroundTile(f,false), w=tileToWorld(tk.x,tk.y);
-      if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*5)) continue;   // 近すぎる重複は避ける
+      if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
       worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z));
       const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
       beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
