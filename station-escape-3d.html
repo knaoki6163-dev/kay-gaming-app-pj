@@ -81,7 +81,13 @@ const CONFIG = {
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
-  MOVE_SPEED: 6.0,      // プレイヤーの移動速度（/秒）
+  MOVE_SPEED: 6.0,      // プレイヤーの移動速度（=走り。酔っ払いを離している時）
+  WALK_SPEED: 3.6,      // 酔っ払いを連れている時のプレイヤー速度（走れない）
+  DRUNK_SPEED: 4.0,     // 酔っ払いがついてくる速度
+  DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
+  DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
+  KONBINI_DIST: 6.0,    // コンビニにこの距離まで近づくと酔っ払いが立ち止まる
+  KONBINI_STOP: 4.0,    // 立ち止まる秒数（酒を求める）
   CHASER_SPEED: 3.2,    // 敵が追跡してくる速度
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
@@ -215,7 +221,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.67";
+  const APP_VERSION = "Ver.68";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -668,7 +674,8 @@ const CONFIG = {
   let exits=[], correctExitNo=1, chasers=[], pedestrians=[], chaserTargets={};
   let deptDoors=[], trainDoors=[];      // 各フロアの「人の出入り口」: B1=デパート, B2=電車ドア
   let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
-  const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1;
+  const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
+  let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0; // 運搬ジレンマ用
   const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
 
   const wallMat=new THREE.MeshLambertMaterial({map:wallTex,color:0xffffff});
@@ -1405,7 +1412,8 @@ const CONFIG = {
     const s=platformStartTile();    // 5つのホームのどれかをランダムに選んで開始（ホームを記録）
     buildWorld();                   // 地下2階の敵を同じホームに置くため開始ホーム確定後に構築
     player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
-    goalEl.textContent="▶ "+correctExitNo+"番出口（地上）へ";
+    buildDrunkAndKonbini(s.x, s.z, 1);   // 酔っ払い＆コンビニを配置
+    goalEl.textContent="▶ 地下で酔っ払いを探せ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
@@ -1462,7 +1470,8 @@ const CONFIG = {
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
-    if(len>0){ vx=vx/len*C.MOVE_SPEED*dt; vz=vz/len*C.MOVE_SPEED*dt;
+    const spd = carrying ? C.WALK_SPEED : C.MOVE_SPEED;   // 連れている間は歩きのみ
+    if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
@@ -1747,12 +1756,83 @@ const CONFIG = {
       for(const ci in pedTorsoInsts) pedTorsoInsts[ci].instanceMatrix.needsUpdate=true; }
   }
 
+  // ---------- 運搬ジレンマ：酔っ払いNPC＋コンビニ ----------
+  function konbiniSignTex(){
+    const cv=document.createElement("canvas"); cv.width=256; cv.height=96; const g=cv.getContext("2d");
+    g.fillStyle="#0a7d3a"; g.fillRect(0,0,256,96); g.fillStyle="#fff"; g.fillRect(6,6,244,84);
+    g.fillStyle="#0a7d3a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 46px sans-serif";
+    g.fillText("コンビニ",128,52);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function randUndergroundTile(f, avoidStart, sx, sz){
+    let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(obsBlock[f]&&obsBlock[f].has(t.x+","+t.y)));
+    if(f===1) tiles=tiles.filter(t=>!(CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
+    if(!tiles.length) tiles=allFloorTiles(f);
+    for(let k=0;k<60;k++){ const t=tiles[(Math.random()*tiles.length)|0], w=tileToWorld(t.x,t.y);
+      if(!avoidStart || Math.hypot(w.x-sx,w.z-sz)>T*9) return t; }
+    return tiles[(Math.random()*tiles.length)|0];
+  }
+  function buildDrunkAndKonbini(sx,sz,slevel){
+    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0;
+    // 酔っ払い（地下のランダムな階・位置）
+    const df=Math.random()<0.5?1:2, dtk=randUndergroundTile(df, df===slevel, sx, sz), dw=tileToWorld(dtk.x,dtk.y);
+    const g=makeHuman(0x8e44ad,0x3a2a4a,0xe6a07a); worldRoot.add(g);   // 紫の服・赤ら顔
+    const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,8,8),
+      new THREE.MeshBasicMaterial({color:0xffd23a, transparent:true, opacity:0.5})); beacon.material.toneMapped=false;
+    beacon.position.set(dw.x,(df-1)*FH+4,dw.z); worldRoot.add(beacon);   // 黄色い光の柱（壁越しに見える目印）
+    drunk={ x:dw.x, z:dw.z, level:df, y:(df-1)*FH, group:g, beacon, sway:Math.random()*6, stopT:0, konbiniDone:false, _px:dw.x, _pz:dw.z };
+    // コンビニ（地下のランダムな階・位置）
+    const kf=Math.random()<0.5?1:2, ktk=randUndergroundTile(kf,false), kw=tileToWorld(ktk.x,ktk.y), kg=new THREE.Group();
+    const box=new THREE.Mesh(new THREE.BoxGeometry(T*0.85,FH*0.66,T*0.85), new THREE.MeshLambertMaterial({color:0x16a34a})); box.position.y=FH*0.33; kg.add(box);
+    const stex=konbiniSignTex();
+    [0.43,-0.43].forEach((zf,i)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(T*0.8,0.9), new THREE.MeshBasicMaterial({map:stex,side:THREE.DoubleSide}));
+      m.material.toneMapped=false; m.position.set(0, FH*0.66+0.3, zf*T); if(i) m.rotation.y=Math.PI; kg.add(m); });
+    kg.position.set(kw.x,(kf-1)*FH,kw.z); worldRoot.add(kg);
+    konbini={ x:kw.x, z:kw.z, level:kf };
+  }
+  function setDrunkMsg(m,t){ drunkMsg=m; drunkMsgT=t; }
+  function updateDrunk(dt){
+    if(!drunk) return;
+    drunk.sway+=dt*4; if(drunkMsgT>0) drunkMsgT-=dt;
+    if(!carrying){
+      if(drunk.level===player.level && Math.hypot(player.x-drunk.x,player.z-drunk.z)<C.DRUNK_TOUCH){
+        carrying=true; playerTrail=[]; if(drunk.beacon) drunk.beacon.visible=false;
+        setDrunkMsg("酔っ払いを連れた！地上の正しい出口へ送り届けろ",3.5); sfxFloor();
+      }
+    } else {
+      if(drunk.stopT>0){ drunk.stopT-=dt; }                                   // コンビニで立ち止まり中
+      else if(konbini && drunk.level===konbini.level && !drunk.konbiniDone && Math.hypot(drunk.x-konbini.x,drunk.z-konbini.z)<C.KONBINI_DIST){
+        drunk.stopT=C.KONBINI_STOP; drunk.konbiniDone=true; setDrunkMsg("酔っ払いがコンビニで酒を欲しがり動かない…そばで待て！",3.5); sfxAlert();
+      } else {                                                                // プレイヤーの通った道を辿って付いてくる
+        const last=playerTrail[playerTrail.length-1];
+        if(!last || last.level!==player.level || Math.hypot(last.x-player.x,last.z-player.z)>1.0){
+          playerTrail.push({x:player.x,z:player.z,level:player.level}); if(playerTrail.length>240) playerTrail.shift(); }
+        if(playerTrail.length){ const tgt=playerTrail[0];
+          if(drunk.level===tgt.level && Math.hypot(drunk.x-tgt.x,drunk.z-tgt.z)<1.3) playerTrail.shift();
+          else moveToward(drunk, tgt.x, tgt.z, C.DRUNK_SPEED, dt, DRUNK_R); }
+      }
+      if(Math.hypot(player.x-drunk.x,player.z-drunk.z) > C.DRUNK_SEPARATE){    // はぐれ
+        carrying=false; drunk.konbiniDone=false; drunk.stopT=0; if(drunk.beacon) drunk.beacon.visible=true;
+        setDrunkMsg("酔っ払いとはぐれた！もう一度探せ",3.5); sfxAlert();
+      }
+    }
+    const si=stairInfo(drunk.x,drunk.z,drunk.level);
+    if(si){ drunk.y=si.y; drunk.level=si.t>=0.5?si.lvl+1:si.lvl; } else drunk.y=(drunk.level-1)*FH;
+    const mvx=drunk.x-drunk._px, mvz=drunk.z-drunk._pz; drunk._px=drunk.x; drunk._pz=drunk.z;
+    const fy=Math.hypot(mvx,mvz)>0.0001?Math.atan2(mvx,mvz):drunk.group.rotation.y;
+    drunk.group.rotation.set(0, fy, Math.sin(drunk.sway)*0.12);               // ふらつき
+    drunk.group.position.set(drunk.x, drunk.y+FOOT_LIFT, drunk.z);
+    if(drunk.beacon && drunk.beacon.visible) drunk.beacon.position.set(drunk.x,(drunk.level-1)*FH+4,drunk.z);
+  }
   function checkResult(){
     for(const chaser of chasers){
       if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
     }
     if(player.level===NF){
-      for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<(e.wide?T*2.6:(e.mid?T*1.3:T*0.6)) && e.no===correctExitNo){ endGame(true); return; } }
+      for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<(e.wide?T*2.6:(e.mid?T*1.3:T*0.6)) && e.no===correctExitNo){
+        if(carrying){ endGame(true); return; }
+        else { if(drunkMsgT<=0) setDrunkMsg("酔っ払いを連れて来い！",1.5); return; }
+      } }
     }
   }
   let flick=0;
@@ -1818,12 +1898,15 @@ const CONFIG = {
   function loop(){
     const dt=Math.min(clock.getDelta(),0.05);
     if(running){
-      updatePlayer(dt); updateChasers(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
+      updatePlayer(dt); updateChasers(dt); updateDrunk(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.showAlert);
       if(alert && !alertPrev) sfxAlert();   // 新たに見つかった瞬間の音
       alertPrev = alert;
+      // 目標表示（運搬の状態を反映。一時メッセージ優先）
+      if(drunkMsgT>0) goalEl.textContent=drunkMsg;
+      else goalEl.textContent = carrying ? ("▶ "+correctExitNo+"番出口（地上）へ送り届けろ") : "▶ 地下で酔っ払いを探せ（黄色い光の柱が目印）";
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
