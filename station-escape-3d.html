@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.84";
+  const APP_VERSION = "Ver.85";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2227,6 +2227,12 @@ const CONFIG = {
     for(const p of pedestrians){ if(p.level!==F) continue; mapCtx.beginPath(); mapCtx.arc((p.x/T)*cs,(p.z/T)*cs,cs*0.16,0,6.28); mapCtx.fill(); }
     for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=chaser.showAlert?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
       mapCtx.arc((chaser.x/T)*cs,(chaser.z/T)*cs,cs*0.4,0,6.28); mapCtx.fill(); }
+    // 酔っ払い（デコイ=灰、目標=マゼンタ＋リング）
+    mapCtx.fillStyle="#8a8f97";
+    for(const d of decoyDrunks){ if(F!==1) break; mapCtx.beginPath(); mapCtx.arc((d.x/T)*cs,(d.z/T)*cs,cs*0.3,0,6.28); mapCtx.fill(); }
+    if(drunk && drunk.level===F){ const dx=(drunk.x/T)*cs, dy=(drunk.z/T)*cs;
+      mapCtx.fillStyle="#e040c0"; mapCtx.beginPath(); mapCtx.arc(dx,dy,cs*0.45,0,6.28); mapCtx.fill();
+      mapCtx.strokeStyle="#ffd23a"; mapCtx.lineWidth=2; mapCtx.beginPath(); mapCtx.arc(dx,dy,cs*0.7,0,6.28); mapCtx.stroke(); }
     const px=(player.x/T)*cs, py=(player.z/T)*cs;
     mapCtx.strokeStyle="#1f6dd0"; mapCtx.lineWidth=2; mapCtx.beginPath();
     mapCtx.moveTo(px,py); mapCtx.lineTo(px+fwd.x*cs*1.2,py+fwd.z*cs*1.2); mapCtx.stroke();
