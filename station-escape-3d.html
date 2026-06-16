@@ -70,8 +70,9 @@
   body.is-touch #floor { left:2px; font-size:12px; padding:3px 7px; }
   body.is-touch #map { left:2px; }
   body.is-touch #mapLabel { left:4px; }
-  body.is-touch #hud { text-align:right; padding-left:130px; padding-right:10px; }
-  body.is-touch #goal { font-size:15px; }
+  body.is-touch #hud { top:64px; left:0; right:0; padding:3px 8px; text-align:center; }  /* 上段(現在地/TIME等)と被らないよう下に降ろす */
+  body.is-touch #goal { font-size:14px; line-height:1.3; }
+  body.is-touch #sub  { font-size:10px; }
 </style>
 </head>
 <body>
@@ -242,7 +243,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.80";
+  const APP_VERSION = "Ver.81";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -712,7 +713,11 @@ const CONFIG = {
   let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
   let upField={};   // 各地下フロアから上の階段へ向かう経路場（案内看板の正しい向きの判定用）
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
-  let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0; // 運搬ジレンマ用
+  let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
+  // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
+  const SHINJUKU_LINES=[{name:"山手線",col:0x9acd32},{name:"中央線",col:0xf15a22},{name:"埼京線",col:0x00a650},
+    {name:"湘南新宿ライン",col:0xe4002b},{name:"小田急線",col:0x0072bc}];
+  let targetLane=0;
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
   let crowdTimer=8, crowdActive=false, crowdEndT=0, baseB2Target=0;   // 電車到着で起きる動的な人混み
   const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
@@ -993,11 +998,10 @@ const CONFIG = {
     }
     // 電車（複数車両編成・連続窓ライン／ドア／床下機器／屋根＋クーラー／先頭車／開ドアの室内灯）
     boarders=[]; trainDoors=[];
-    const stripes=[0x2b6fb0,0x3f9d4f,0xd5912a,0xb84040,0x6a55a0,0x0f9e8e];
     const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T, total=(z1-z0)*0.98, NCARS=4, gap=0.5, carLen=total/NCARS-gap;
     TRACKS.forEach((l,i)=>{
       const xc=(l[0]+l[1]+1)/2*T, carW=(l[1]-l[0]+1)*T*0.62, carH=FH*0.78, by0=0.55;
-      const stripe="#"+stripes[i%stripes.length].toString(16).padStart(6,"0");
+      const stripe="#"+SHINJUKU_LINES[i%SHINJUKU_LINES.length].col.toString(16).padStart(6,"0"); // 路線カラー
       const side=new THREE.MeshLambertMaterial({map:makeTrainSideTex(stripe)});
       const endMat=new THREE.MeshLambertMaterial({color:0xe2e7ec});
       const roofMat=new THREE.MeshLambertMaterial({color:0xbac1c7});
@@ -1039,7 +1043,8 @@ const CONFIG = {
     const psBlank=new THREE.MeshLambertMaterial({color:0x171c22});
     const ekiFace=new THREE.MeshBasicMaterial({map:ekimeiTex()}); ekiFace.toneMapped=false;
     LANES.forEach(([x0,x1],li)=>{
-      const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
+      const ln=SHINJUKU_LINES[li%SHINJUKU_LINES.length];
+      const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1, ln, li===targetLane), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
       for(const zf of [0.3,0.7]){
         const z=(PLAT_TOP + (PLAT_BOT-PLAT_TOP)*zf)*T;
         const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.25,0.55,0.12), [psBlank,psBlank,psBlank,psBlank,face,face]);
@@ -1054,11 +1059,14 @@ const CONFIG = {
       const epole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.3,0.08), psBlank); epole.position.set(cx,FH-0.35,ez); worldRoot.add(epole);
     });
   }
-  function platformSignTex(n){
-    const w=256,hh=72,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
-    g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle="#3a444d"; g.lineWidth=3; g.strokeRect(3,3,w-6,hh-6);
-    g.fillStyle="#ffd23a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 40px sans-serif"; g.fillText(n+"番線",96,38);
-    g.fillStyle="#fff"; g.font="bold 26px sans-serif"; g.fillText("のりば",200,38);
+  function platformSignTex(n, line, isTarget){
+    const w=320,hh=72,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle=isTarget?"#ffd23a":"#3a444d"; g.lineWidth=isTarget?6:3; g.strokeRect(3,3,w-6,hh-6);
+    const lc="#"+(line?line.col:0x888888).toString(16).padStart(6,"0");
+    g.fillStyle=lc; g.fillRect(10,18,16,36);                                  // 路線カラーチップ
+    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 34px sans-serif"; g.fillText((line?line.name:n+"番線"),36,32);
+    g.fillStyle="#aab"; g.font="bold 20px sans-serif"; g.fillText(n+"番線 のりば",36,58);
+    if(isTarget){ g.fillStyle="#ffd23a"; g.textAlign="right"; g.font="bold 22px sans-serif"; g.fillText("★目標",w-14,30); }
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function ekimeiTex(){   // 駅名標（駅名＋前後の駅＋矢印）
@@ -1588,12 +1596,13 @@ const CONFIG = {
     RNG = mulberry32(C.SEED);   // 毎回同じマップにする
     generateAllFloors(); findStairs(); cleanupDeadEnds();
     platformStartTile();            // 地下2階の敵の配置レーンだけランダムに決める（プレイヤー開始位置には使わない）
-    buildWorld();                   // exits / correctExitNo はここで確定
+    targetLane=(Math.random()*Math.min(LANES.length,SHINJUKU_LINES.length))|0;  // 目標の路線（ホーム）を指定
+    buildWorld();                   // exits / correctExitNo / 路線サイン はここで確定
     // プレイヤーは「地上の指定出口」からスタート（そこから地下へ降りて酔っ払いを探し、ここへ連れ戻す）
     const startExit = exits.find(e=>e.no===correctExitNo) || exits[0];
     player.x=startExit.sx; player.z=startExit.sz; player.y=(NF-1)*FH; player.yaw=0; player.pitch=0; player.level=NF; player.plevel=NF;
-    buildDrunkAndKonbini(player.x, player.z, NF);   // 酔っ払い＆コンビニ（地下）を配置
-    goalEl.textContent="▶ 地下で酔っ払いを探せ（"+correctExitNo+"番出口から地下へ）";
+    buildDrunkAndKonbini(player.x, player.z, NF);   // 酔っ払い（各ホーム）＆コンビニを配置
+    goalEl.textContent="▶ 地下2階の【"+SHINJUKU_LINES[targetLane].name+"】ホームの酔っ払いを"+correctExitNo+"番出口へ連れ戻せ";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
@@ -1659,8 +1668,7 @@ const CONFIG = {
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    const onStair = isStairTileAt(player.x,player.z);        // 階段の上では人混み減速をかけない（遅くならない）
-    const spd = (carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED)) * (onStair?1:crowdDrag());
+    const spd = carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED); // 人混み減速は廃止（道中で勝手に遅くならない）
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
@@ -1926,7 +1934,14 @@ const CONFIG = {
       if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
       else if(p.kind==="E"){ exitStep(p, dt); p.y=(p.level-1)*FH; }
       else if(p.kind==="M"){
+        const sx0=p.x, sz0=p.z;
         moverStep(p, dt);
+        // 詰まり対策：0.7秒動けなかったら、乗車中は目的地へワープして到着扱い／接近中は諦めて徘徊（階段で固まらない）
+        if(Math.abs(p.x-sx0)+Math.abs(p.z-sz0) < 0.002){ p.stuckT=(p.stuckT||0)+dt;
+          if(p.stuckT>0.7){ p.stuckT=0;
+            if(p.ride){ p.x=p.ride.dx; p.z=p.ride.dz; p.level=p.ride.goal; }
+            else { p.trip=-1; p.kind="W"; p.dir=Math.random()*6.28; p.timer=0.6; p.roleT=3+Math.random()*5; } }
+        } else p.stuckT=0;
         const si=stairInfo(p.x,p.z,p.level);
         if(si){ p.y=si.y; p.level=si.t>=0.5?si.lvl+1:si.lvl; }
         else { p.y=(p.level-1)*FH;
@@ -1936,14 +1951,34 @@ const CONFIG = {
             p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=9+Math.random()*9; }
         }
       } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
-      const base=p.y+FOOT_LIFT;
-      _pedDummy.rotation.set(0,p.ry,0);
-      _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(p.gi,_pedDummy.matrix);
-      _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(p.ti,_pedDummy.matrix);
-      _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(p.gi,_pedDummy.matrix);
+      setPedMatrix(p);
     }
+    separateNearbyPeds();   // プレイヤー近傍の通行人が重なり過ぎない（合体を防ぐ）
     if(pedLegsInst){ pedLegsInst.instanceMatrix.needsUpdate=true; pedHeadInst.instanceMatrix.needsUpdate=true;
       for(const ci in pedTorsoInsts) pedTorsoInsts[ci].instanceMatrix.needsUpdate=true; }
+  }
+  function setPedMatrix(p){
+    const base=p.y+FOOT_LIFT; _pedDummy.rotation.set(0,p.ry,0);
+    _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(p.gi,_pedDummy.matrix);
+    _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(p.ti,_pedDummy.matrix);
+    _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(p.gi,_pedDummy.matrix);
+  }
+  // プレイヤー近傍（同フロア・約14m以内）の通行人だけ、重なりを押し離す軽量な分離
+  function separateNearbyPeds(){
+    if(!pedLegsInst) return;
+    let near=[];
+    for(const p of pedestrians){ if(p.level!==player.level) continue;
+      const dx=p.x-player.x, dz=p.z-player.z; if(dx*dx+dz*dz<196) near.push(p); }
+    if(near.length>110){ near.sort((a,b)=>((a.x-player.x)**2+(a.z-player.z)**2)-((b.x-player.x)**2+(b.z-player.z)**2)); near.length=110; }
+    const MIN=0.85, touched=new Set();
+    for(let a=0;a<near.length;a++)for(let b=a+1;b<near.length;b++){
+      const pa=near[a], pb=near[b], dx=pb.x-pa.x, dz=pb.z-pa.z, d2=dx*dx+dz*dz;
+      if(d2<MIN*MIN && d2>1e-4){ const d=Math.sqrt(d2), push=(MIN-d)*0.5/d, px=dx*push, pz=dz*push;
+        if(canStandPed(pa.x-px,pa.z-pz,PED_R,pa.level)){ pa.x-=px; pa.z-=pz; touched.add(pa); }
+        if(canStandPed(pb.x+px,pb.z+pz,PED_R,pb.level)){ pb.x+=px; pb.z+=pz; touched.add(pb); }
+      }
+    }
+    for(const p of touched) setPedMatrix(p);
   }
 
   // ---------- 運搬ジレンマ：酔っ払いNPC＋コンビニ ----------
@@ -2006,19 +2041,28 @@ const CONFIG = {
     return tiles[(Math.random()*tiles.length)|0];
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
-    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0;
-    // 酔っ払い（地下のランダムな階・位置）
-    const df=Math.random()<0.5?1:2, dtk=randUndergroundTile(df, df===slevel, sx, sz), dw=tileToWorld(dtk.x,dtk.y);
-    const g=makeHuman(0x8e44ad,0x3a2a4a,0xe6a07a); worldRoot.add(g);   // 紫の服・赤ら顔
-    const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,8,8),
-      new THREE.MeshBasicMaterial({color:0xffd23a, transparent:true, opacity:0.5})); beacon.material.toneMapped=false;
-    beacon.position.set(dw.x,(df-1)*FH+4,dw.z); worldRoot.add(beacon);   // 黄色い光の柱（壁越しに見える目印）
-    // 頭上の尿意メーター（予兆/猶予の可視化）
-    const mg=new THREE.Group();
-    const mbg=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.26), new THREE.MeshBasicMaterial({color:0x10141a})); mbg.material.toneMapped=false;
-    const mfill=new THREE.Mesh(new THREE.PlaneGeometry(1.4,0.2), new THREE.MeshBasicMaterial({color:0x4caf50})); mfill.material.toneMapped=false; mfill.position.z=0.01;
-    mg.add(mbg,mfill); mg.visible=false; worldRoot.add(mg);
-    drunk={ x:dw.x, z:dw.z, level:df, y:(df-1)*FH, group:g, beacon, meter:{group:mg,fill:mfill}, sway:Math.random()*6, stopT:0, konbiniDone:false, _px:dw.x, _pz:dw.z };
+    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[];
+    // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
+    const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
+      for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
+        if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y) && !(x===xc&&OBJ_ROWS.includes(y))) tiles.push({x,y});
+      const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:PLAT_TOP}; return tileToWorld(t.x,t.y); };
+    for(let li=0; li<LANES.length; li++){
+      const w=laneTile(li), isTarget=(li===targetLane);
+      const g=makeHuman(isTarget?0x8e44ad:0x717784, 0x3a2a4a, 0xe6a07a); worldRoot.add(g); // 目標=紫/デコイ=灰
+      if(isTarget){
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,8,8),
+          new THREE.MeshBasicMaterial({color:0xffd23a, transparent:true, opacity:0.5})); beacon.material.toneMapped=false;
+        beacon.position.set(w.x,4,w.z); worldRoot.add(beacon);
+        const mg=new THREE.Group();
+        const mbg=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.26), new THREE.MeshBasicMaterial({color:0x10141a})); mbg.material.toneMapped=false;
+        const mfill=new THREE.Mesh(new THREE.PlaneGeometry(1.4,0.2), new THREE.MeshBasicMaterial({color:0x4caf50})); mfill.material.toneMapped=false; mfill.position.z=0.01;
+        mg.add(mbg,mfill); mg.visible=false; worldRoot.add(mg);
+        drunk={ x:w.x, z:w.z, level:1, y:0, group:g, beacon, meter:{group:mg,fill:mfill}, sway:Math.random()*6, stopT:0, konbiniDone:false, line:SHINJUKU_LINES[li], _px:w.x, _pz:w.z };
+      } else {
+        decoyDrunks.push({ x:w.x, z:w.z, group:g, sway:Math.random()*6 });
+      }
+    }
     // コンビニ（地下のランダムな階・位置）
     const kf=Math.random()<0.5?1:2, ktk=randUndergroundTile(kf,false), kw=tileToWorld(ktk.x,ktk.y);
     worldRoot.add(buildKonbini(kw.x,(kf-1)*FH,kw.z));
@@ -2107,6 +2151,7 @@ const CONFIG = {
     }
   }
   function updateDrunk(dt){
+    for(const d of decoyDrunks){ d.sway+=dt*3.3; d.group.position.set(d.x,FOOT_LIFT,d.z); d.group.rotation.set(0,d.sway*0.3,Math.sin(d.sway)*0.14); } // 他ホームの酔っ払い（デコイ・ふらつくだけ）
     if(!drunk) return;
     drunk.sway+=dt*4; if(drunkMsgT>0) drunkMsgT-=dt;
     if(!carrying){
@@ -2223,7 +2268,9 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=drunkMsg;
-      else goalEl.textContent = carrying ? ("▶ "+correctExitNo+"番出口（地上）へ酔っ払いを連れ戻せ") : "▶ 地下で酔っ払いを探せ（黄色い光の柱が目印）";
+      else goalEl.textContent = carrying
+        ? ("▶ "+correctExitNo+"番出口へ酔っ払いを連れ戻せ")
+        : ("▶ 地下2階【"+SHINJUKU_LINES[targetLane].name+"】ホームの酔っ払いを探せ（黄色い光の柱）");
       carryEl.classList.toggle("hidden", !carrying);   // 連れている間の明示表示
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
