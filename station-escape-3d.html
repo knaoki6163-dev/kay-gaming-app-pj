@@ -93,10 +93,14 @@ const CONFIG = {
   TOILET_WARN: 4.0,     // 予兆（猶予が始まる前の警告）秒数
   TOILET_LIMIT: 13.0,   // 予兆後、トイレに着くまでの猶予秒数（超過でGAME OVER）
   TOILET_DIST: 5.0,     // トイレにこの距離まで近づくと用を足せる（解消）
-  CHASER_SPEED: 3.2,    // 敵が追跡してくる速度
+  CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
   ALERT_SIGHT_MULT: 1.5,// 一度見つけた敵の探知範囲の倍率（探知能力UP）
+  CROUCH_SPEED: 2.6,    // しゃがみ移動速度
+  CROUCH_EYE: 0.85,     // しゃがみ時の視点の高さ
+  CROUCH_SIGHT_MULT: 0.35, // しゃがむと敵の視認距離をこの倍率に（見つかりにくい）
+  CROUCH_HIDE_PED: 2.8, // しゃがみ中、この距離内に通行人がいると完全に紛れて見つからない
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
@@ -159,7 +163,7 @@ const CONFIG = {
   <h1>駅の出口探索 3D（地下2階〜地上）</h1>
   <p><b>地下2階</b>からスタート。<b>階段で地上まで上がり</b>、外周にある指定番号の<b>正しい出口</b>から脱出せよ。<br>
      構内には<b>赤い追跡者</b>がいる。普段は徘徊しているが、<b>こちらを見つけると追ってくる</b>。捕まったらゲームオーバー。</p>
-  <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
+  <p style="color:#888">PC: クリックで開始（マウス視点＋WASD）／ <b>Cでしゃがむ</b>（敵に見つかりにくい・人混みに紛れる／酔っ払いを連れている間は不可）／ スマホ: 画面ドラッグで視点・左下ボタンで移動</p>
   <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
     <button id="devBtn">開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span></button>
     <button id="userBtn">ユーザーとしてプレイ<br><span style="font-size:12px;opacity:.85">（マップなし）</span></button>
@@ -226,7 +230,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.69";
+  const APP_VERSION = "Ver.70";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1371,7 +1375,7 @@ const CONFIG = {
 
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
-  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false;
+  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false;
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
     if(["arrowup","arrowdown","arrowleft","arrowright"].includes(k))e.preventDefault();});
@@ -1476,7 +1480,8 @@ const CONFIG = {
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
-    const spd = carrying ? C.WALK_SPEED : C.MOVE_SPEED;   // 連れている間は歩きのみ
+    crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
+    const spd = carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED);
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
@@ -1485,7 +1490,7 @@ const CONFIG = {
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
     if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
-    camera.position.set(player.x, player.y+C.EYE_HEIGHT, player.z);
+    camera.position.set(player.x, player.y+(crouching?C.CROUCH_EYE:C.EYE_HEIGHT), player.z);
   }
 
   function entCanStand(x,z,r,f){ return canStand(x,z,r,f) && !obstacleHit(x,z,0.3,f); }
@@ -1579,8 +1584,10 @@ const CONFIG = {
     for(const chaser of chasers){
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
-      const sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
-      const see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
+      let sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
+      if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
+      let see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
+      if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
       if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=C.CHASER_MEMORY; }
       else if(chaser.mem>0) chaser.mem-=dt;
       // 追跡は「巡回中＆同フロア」のみ（移動中=transitは横断に専念）。スピードは従来どおり
@@ -1972,7 +1979,7 @@ const CONFIG = {
       else goalEl.textContent = carrying ? ("▶ "+correctExitNo+"番出口（地上）へ送り届けろ") : "▶ 地下で酔っ払いを探せ（黄色い光の柱が目印）";
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
-      subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+"　/　WASD移動・マウス視点";
+      subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　WASD移動・C:しゃがむ・マウス視点";
     }
     // 敵に見つかって追われている間は画面周囲を赤くチカチカ（サイレント追跡は除く）
     const chased = running && chasers.some(c=>c.showAlert);
