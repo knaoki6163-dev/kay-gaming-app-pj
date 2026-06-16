@@ -93,6 +93,9 @@ const CONFIG = {
   TOILET_WARN: 4.0,     // 予兆（猶予が始まる前の警告）秒数
   TOILET_LIMIT: 13.0,   // 予兆後、トイレに着くまでの猶予秒数（超過でGAME OVER）
   TOILET_DIST: 5.0,     // トイレにこの距離まで近づくと用を足せる（解消）
+  TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
+  CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
+  CROWD_SURGE: 220,     // 到着時にホームへ集まる通行人の数
   CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
@@ -230,7 +233,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.70";
+  const APP_VERSION = "Ver.71";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -686,6 +689,7 @@ const CONFIG = {
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0; // 運搬ジレンマ用
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
+  let crowdTimer=8, crowdActive=false, crowdEndT=0, baseB2Target=0;   // 電車到着で起きる動的な人混み
   const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
 
   const wallMat=new THREE.MeshLambertMaterial({map:wallTex,color:0xffffff});
@@ -1094,6 +1098,7 @@ const CONFIG = {
     const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
     pedTargets={};
     for(let f=1;f<=NF;f++) pedTargets[f]=(f===NF)?basePer*C.GROUND_PED_MULT:(f===1?basePer*C.B2_PED_MULT:basePer*C.B1_PED_MULT);
+    baseB2Target=pedTargets[1]; crowdActive=false; crowdEndT=0; crowdTimer=C.TRAIN_INTERVAL*0.6;   // 電車到着の人混み用
     // 各フロアの「人の出入り口」(人数調節に使う): 地上=出口, 地下1階=デパート, 地下2階=電車ドア
     sourcePts={ [NF]: exits.map(e=>({x:e.sx,z:e.sz})), 2: deptDoors.slice(), 1: trainDoors.slice() };
     buildFlowFields();   // フロア間移動の経路場（行き止まりに詰まらない誘導）
@@ -1860,6 +1865,37 @@ const CONFIG = {
     g.position.set(drunk.x, drunk.y+FOOT_LIFT+2.35, drunk.z); g.quaternion.copy(camera.quaternion);
     g.scale.setScalar(toiletState==="warn" ? (0.85+0.3*(0.5+0.5*Math.sin(flick*9))) : 1);
   }
+  // ---------- 動的な人混み（電車到着でホームに通行人が大量に集まる） ----------
+  function surgeToPlatform(n){
+    const tiles=pedPool[1]; if(!tiles||!tiles.length) return;
+    let pl=-1;
+    if(player.level===1){ const px=Math.floor(player.x/T); for(let i=0;i<LANES.length;i++){ if(px>=LANES[i][0]-1&&px<=LANES[i][1]+1){ pl=i; break; } } }
+    const laneTiles = pl>=0 ? tiles.filter(t=> t.x>=LANES[pl][0] && t.x<=LANES[pl][1]) : null;
+    let moved=0;
+    for(const p of pedestrians){
+      if(moved>=n) break;
+      if(p.level===1) continue;                 // 他フロアから引っ張ってくる
+      const useLane = laneTiles && laneTiles.length && Math.random()<0.7;   // プレイヤーのホームに7割
+      const pool = useLane?laneTiles:tiles, t=pool[(Math.random()*pool.length)|0], w=tileToWorld(t.x,t.y);
+      p.x=w.x+(Math.random()-0.5)*T*0.5; p.z=w.z+(Math.random()-0.5)*T*0.5; p.level=1; p.y=0;
+      p.ride=null; p.trip=-1; p.kind="W"; p.visit=0; p.ktarget=-1; p.roleT=C.CROWD_DURATION*(0.7+Math.random()*0.6);
+      moved++;
+    }
+  }
+  function updateCrowd(dt){
+    if(!crowdActive){
+      crowdTimer-=dt;
+      if(crowdTimer<=0){
+        crowdActive=true; crowdEndT=C.CROWD_DURATION;
+        pedTargets[1]=baseB2Target+C.CROWD_SURGE;   // 混雑の間はホームの目標人数を増やして維持
+        surgeToPlatform(C.CROWD_SURGE);
+        setDrunkMsg("🚃 電車が到着！ホームが人混みで動きにくい",3.2); trainPass();
+      }
+    } else {
+      crowdEndT-=dt;
+      if(crowdEndT<=0){ crowdActive=false; pedTargets[1]=baseB2Target; crowdTimer=C.TRAIN_INTERVAL*(0.8+Math.random()*0.5); }
+    }
+  }
   function updateDrunk(dt){
     if(!drunk) return;
     drunk.sway+=dt*4; if(drunkMsgT>0) drunkMsgT-=dt;
@@ -1968,7 +2004,7 @@ const CONFIG = {
   function loop(){
     const dt=Math.min(clock.getDelta(),0.05);
     if(running){
-      updatePlayer(dt); updateChasers(dt); updateDrunk(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
+      updatePlayer(dt); updateChasers(dt); updateDrunk(dt); updateCrowd(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.showAlert);
