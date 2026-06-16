@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.78";
+  const APP_VERSION = "Ver.79";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -956,6 +956,10 @@ const CONFIG = {
       door.position.set(fx, base+1.45, fz); door.lookAt(w.x, base+1.45, w.z); worldRoot.add(door);
       const sgn=new THREE.Mesh(new THREE.PlaneGeometry(WD*0.95,1.05), signMat);
       sgn.position.set(fx, base+3.4, fz); sgn.lookAt(w.x, base+3.4, w.z); worldRoot.add(sgn);
+      // 庇（キャノピー）：入口の上から通路側へ張り出す
+      const ext=1.1, ccx=fx-c.dx*ext*0.5, ccz=fz-c.dy*ext*0.5;
+      const cgeo=(c.dx!==0)? new THREE.BoxGeometry(ext+0.2,0.18,WD*0.98) : new THREE.BoxGeometry(WD*0.98,0.18,ext+0.2);
+      const canopy=new THREE.Mesh(cgeo, frameMat); canopy.position.set(ccx, base+2.95, ccz); worldRoot.add(canopy);
     }
   }
 
@@ -1026,8 +1030,9 @@ const CONFIG = {
         });
       }
     });
-    // ホームの吊り下げ案内サイン（◯番線 のりば）
+    // ホームの吊り下げ案内サイン（◯番線 のりば）＋ 駅名標
     const psBlank=new THREE.MeshLambertMaterial({color:0x171c22});
+    const ekiFace=new THREE.MeshBasicMaterial({map:ekimeiTex()}); ekiFace.toneMapped=false;
     LANES.forEach(([x0,x1],li)=>{
       const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
       for(const zf of [0.3,0.7]){
@@ -1037,6 +1042,11 @@ const CONFIG = {
         const pole=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.45,0.07), psBlank);
         pole.position.set(cx, FH-0.27, z); worldRoot.add(pole);
       }
+      // 駅名標（ホーム中央に吊り下げ）
+      const ez=(PLAT_TOP+(PLAT_BOT-PLAT_TOP)*0.5)*T;
+      const eki=new THREE.Mesh(new THREE.BoxGeometry(T*1.5,0.7,0.12), [psBlank,psBlank,psBlank,psBlank,ekiFace,ekiFace]);
+      eki.position.set(cx,FH-0.78,ez); worldRoot.add(eki);
+      const epole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.3,0.08), psBlank); epole.position.set(cx,FH-0.35,ez); worldRoot.add(epole);
     });
   }
   function platformSignTex(n){
@@ -1044,6 +1054,14 @@ const CONFIG = {
     g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle="#3a444d"; g.lineWidth=3; g.strokeRect(3,3,w-6,hh-6);
     g.fillStyle="#ffd23a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 40px sans-serif"; g.fillText(n+"番線",96,38);
     g.fillStyle="#fff"; g.font="bold 26px sans-serif"; g.fillText("のりば",200,38);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function ekimeiTex(){   // 駅名標（駅名＋前後の駅＋矢印）
+    const w=384,hh=96,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#ffffff"; g.fillRect(0,0,w,hh); g.fillStyle="#0a7d3a"; g.fillRect(0,hh-12,w,12); g.strokeStyle="#0a7d3a"; g.lineWidth=4; g.strokeRect(3,3,w-6,hh-6);
+    g.fillStyle="#1a1f25"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 42px sans-serif"; g.fillText("みなみ駅",w/2,38);
+    g.fillStyle="#777"; g.font="bold 18px sans-serif"; g.fillText("MINAMI",w/2,68);
+    g.fillStyle="#555"; g.font="18px sans-serif"; g.textAlign="left"; g.fillText("◀ きた",16,40); g.textAlign="right"; g.fillText("ひがし ▶",w-16,40);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   // 乗降客：ドアとホームの間を行き来
@@ -1925,9 +1943,52 @@ const CONFIG = {
   function konbiniSignTex(){
     const cv=document.createElement("canvas"); cv.width=256; cv.height=96; const g=cv.getContext("2d");
     g.fillStyle="#0a7d3a"; g.fillRect(0,0,256,96); g.fillStyle="#fff"; g.fillRect(6,6,244,84);
-    g.fillStyle="#0a7d3a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 46px sans-serif";
-    g.fillText("コンビニ",128,52);
+    g.fillStyle="#0a7d3a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 40px sans-serif";
+    g.fillText("コンビニ",128,38); g.fillStyle="#e8543a"; g.font="bold 22px sans-serif"; g.fillText("CONVENIENCE",128,72);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  let _konbiniIntTexC=null;
+  function konbiniIntTex(){   // 明るいコンビニ店内（光る陳列棚）
+    const w=160,h=96,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle="#fbfdff"; g.fillRect(0,0,w,h);
+    for(let s=0;s<3;s++){ const y=20+s*28; g.fillStyle="#dde5ec"; g.fillRect(2,y+2,w-4,4);
+      let x=6; while(x<w-12){ const pw=8+(Math.random()*9)|0, ph=14+(Math.random()*8)|0;
+        g.fillStyle="hsl("+((Math.random()*360)|0)+",72%,60%)"; g.fillRect(x,y-ph+2,pw,ph); x+=pw+3; } }
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildKonbini(cx,cz,baseY){
+    if(!_konbiniIntTexC) _konbiniIntTexC=konbiniIntTex();
+    const g=new THREE.Group(), W=T*0.95, H=FH*0.72, D=T*0.95;
+    const base=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.16,D), new THREE.MeshLambertMaterial({color:0x444b52})); base.position.y=H*0.08; g.add(base);
+    const intM=new THREE.MeshBasicMaterial({map:_konbiniIntTexC}); intM.toneMapped=false;          // 光る店内
+    const interior=new THREE.Mesh(new THREE.BoxGeometry(W*0.99,H*0.62,D*0.99), intM); interior.position.y=H*0.16+H*0.31; g.add(interior);
+    const signM=new THREE.MeshBasicMaterial({map:konbiniSignTex()}); signM.toneMapped=false;
+    const sign=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.22,D), signM); sign.position.y=H*0.16+H*0.62+H*0.11; g.add(sign);
+    const awn=new THREE.Mesh(new THREE.BoxGeometry(W*1.14,0.16,D*1.14), new THREE.MeshLambertMaterial({color:0x0a7d3a})); awn.position.y=H+0.06; g.add(awn);
+    g.position.set(cx,baseY,cz); return g;
+  }
+  let _toiletIconTexC=null;
+  function toiletIconTex(){   // 男女ピクトグラム
+    const w=128,h=128,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle="#fff"; g.fillRect(0,0,w,h); g.strokeStyle="#cdd5dd"; g.lineWidth=4; g.strokeRect(3,3,w-6,h-6);
+    g.fillStyle="#1d4ed8"; g.beginPath(); g.arc(40,34,11,0,6.28); g.fill(); g.fillRect(31,46,18,40); g.fillRect(30,86,8,30); g.fillRect(41,86,8,30);
+    g.fillStyle="#d6336c"; g.beginPath(); g.arc(90,34,11,0,6.28); g.fill();
+    g.beginPath(); g.moveTo(90,46); g.lineTo(74,90); g.lineTo(106,90); g.closePath(); g.fill(); g.fillRect(84,90,5,28); g.fillRect(92,90,5,28);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildToiletBlock(cx,cz,baseY){   // きれいなトイレ入口（入口の暗がり＋WC看板＋男女ピクト）
+    if(!_toiletIconTexC) _toiletIconTexC=toiletIconTex();
+    const g=new THREE.Group(), W=T*0.82, H=FH*0.62, D=T*0.82;
+    const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D), new THREE.MeshLambertMaterial({color:0xeef2f6})); body.position.y=H/2; g.add(body);
+    const doorM=new THREE.MeshBasicMaterial({color:0x12161a,side:THREE.DoubleSide}); doorM.toneMapped=false;
+    const iconM=new THREE.MeshBasicMaterial({map:_toiletIconTexC,side:THREE.DoubleSide}); iconM.toneMapped=false;
+    [1,-1].forEach(s=>{
+      const dr=new THREE.Mesh(new THREE.PlaneGeometry(W*0.46,H*0.78), doorM); dr.position.set(-W*0.16, H*0.4, s*(D/2+0.02)); if(s<0)dr.rotation.y=Math.PI; g.add(dr);
+      const ic=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.85), iconM); ic.position.set(W*0.28, H*0.62, s*(D/2+0.03)); if(s<0)ic.rotation.y=Math.PI; g.add(ic);
+    });
+    const signM=new THREE.MeshBasicMaterial({map:toiletSignTex()}); signM.toneMapped=false;
+    const sign=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.3,D*0.6), signM); sign.position.y=H+H*0.15; g.add(sign);
+    g.position.set(cx,baseY,cz); return g;
   }
   function randUndergroundTile(f, avoidStart, sx, sz){
     let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(obsBlock[f]&&obsBlock[f].has(t.x+","+t.y)));
@@ -1952,12 +2013,8 @@ const CONFIG = {
     mg.add(mbg,mfill); mg.visible=false; worldRoot.add(mg);
     drunk={ x:dw.x, z:dw.z, level:df, y:(df-1)*FH, group:g, beacon, meter:{group:mg,fill:mfill}, sway:Math.random()*6, stopT:0, konbiniDone:false, _px:dw.x, _pz:dw.z };
     // コンビニ（地下のランダムな階・位置）
-    const kf=Math.random()<0.5?1:2, ktk=randUndergroundTile(kf,false), kw=tileToWorld(ktk.x,ktk.y), kg=new THREE.Group();
-    const box=new THREE.Mesh(new THREE.BoxGeometry(T*0.85,FH*0.66,T*0.85), new THREE.MeshLambertMaterial({color:0x16a34a})); box.position.y=FH*0.33; kg.add(box);
-    const stex=konbiniSignTex();
-    [0.43,-0.43].forEach((zf,i)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(T*0.8,0.9), new THREE.MeshBasicMaterial({map:stex,side:THREE.DoubleSide}));
-      m.material.toneMapped=false; m.position.set(0, FH*0.66+0.3, zf*T); if(i) m.rotation.y=Math.PI; kg.add(m); });
-    kg.position.set(kw.x,(kf-1)*FH,kw.z); worldRoot.add(kg);
+    const kf=Math.random()<0.5?1:2, ktk=randUndergroundTile(kf,false), kw=tileToWorld(ktk.x,ktk.y);
+    worldRoot.add(buildKonbini(kw.x,(kf-1)*FH,kw.z));
     konbini={ x:kw.x, z:kw.z, level:kf };
     buildToilets(); resetToiletUrge();   // トイレ配置＆尿意タイマー初期化
   }
@@ -1970,13 +2027,10 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function buildToilets(){
-    toilets=[]; const stex=toiletSignTex();
+    toilets=[];
     for(let f=1;f<=NF;f++){
-      const tk=randUndergroundTile(f,false), w=tileToWorld(tk.x,tk.y), kg=new THREE.Group();
-      const box=new THREE.Mesh(new THREE.BoxGeometry(T*0.7,FH*0.6,T*0.7), new THREE.MeshLambertMaterial({color:0x2563c9})); box.position.y=FH*0.3; kg.add(box);
-      [0.36,-0.36].forEach((zf,i)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(T*0.6,0.8), new THREE.MeshBasicMaterial({map:stex,side:THREE.DoubleSide}));
-        m.material.toneMapped=false; m.position.set(0,FH*0.6+0.25,zf*T); if(i) m.rotation.y=Math.PI; kg.add(m); });
-      kg.position.set(w.x,(f-1)*FH,w.z); worldRoot.add(kg);
+      const tk=randUndergroundTile(f,false), w=tileToWorld(tk.x,tk.y);
+      worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z));
       const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
       beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
       toilets.push({x:w.x,z:w.z,level:f,beacon});
