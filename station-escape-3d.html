@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.76";
+  const APP_VERSION = "Ver.77";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -732,18 +732,28 @@ const CONFIG = {
   const trashMat =new THREE.MeshLambertMaterial({color:0x3f7d4f});
   const signMat  =new THREE.MeshLambertMaterial({color:0x3a6ea5});
   // 電車の側面テクスチャ（窓・ドアを繰り返し描く）
-  function makeTrainSideTex(stripe){
-    const w=256,hh=128,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
-    g.fillStyle="#dfe3e7";g.fillRect(0,0,w,hh);                       // 車体
-    g.fillStyle=stripe;g.fillRect(0,16,w,10);                         // ラインカラー帯
-    g.fillStyle="#2b3640";g.fillRect(0,104,w,24);                     // スカート
-    // 窓2枚＋ドア1枚の繰り返し単位
-    g.fillStyle="#9fd6ea"; g.strokeStyle="#566"; g.lineWidth=3;
-    g.fillRect(16,40,70,46); g.strokeRect(16,40,70,46);
-    g.fillRect(170,40,70,46); g.strokeRect(170,40,70,46);
-    g.fillStyle="#8b939b"; g.fillRect(100,34,56,70); g.strokeRect(100,34,56,70); // ドア
-    g.beginPath();g.moveTo(128,34);g.lineTo(128,104);g.stroke();      // ドア中央線
-    const t=new THREE.CanvasTexture(cv); t.wrapS=THREE.RepeatWrapping; t.anisotropy=4; return t;
+  function makeTrainSideTex(stripe){   // 1両ぶんの側面（窓ライン＋2ドア＋帯＋床下）
+    const w=512,hh=128,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    const bg=g.createLinearGradient(0,0,0,hh); bg.addColorStop(0,"#f2f4f7"); bg.addColorStop(.45,"#e1e7eb"); bg.addColorStop(1,"#c6cdd3");
+    g.fillStyle=bg; g.fillRect(0,0,w,hh);                                  // 車体（銀/白のグラデ）
+    g.fillStyle=stripe; g.fillRect(0,22,w,18);                            // ラインカラー帯
+    g.fillStyle="rgba(255,255,255,.3)"; g.fillRect(0,22,w,3);
+    // 連続した窓ライン
+    const wy=52, wh=40; const gg=g.createLinearGradient(0,wy,0,wy+wh);
+    gg.addColorStop(0,"#43616f"); gg.addColorStop(.5,"#26343d"); gg.addColorStop(1,"#19232b");
+    g.fillStyle=gg; g.fillRect(12,wy,w-24,wh);
+    g.strokeStyle="#b8c0c7"; g.lineWidth=3; g.strokeRect(12,wy,w-24,wh);
+    for(let x=12+56;x<w-12;x+=56){ g.beginPath(); g.moveTo(x,wy); g.lineTo(x,wy+wh); g.stroke(); } // 窓枠
+    // 床下機器（スカート＋台車）
+    g.fillStyle="#22272c"; g.fillRect(0,104,w,24);
+    g.fillStyle="#14181c"; g.fillRect(46,108,86,18); g.fillRect(w-132,108,86,18);
+    // 2枚のドア（窓ラインに重ねる）
+    [w*0.28, w*0.72].forEach(cx=>{ const dw=54,x=cx-dw/2;
+      g.fillStyle="#d3d9de"; g.fillRect(x,42,dw,62); g.strokeStyle="#969ea6"; g.lineWidth=2; g.strokeRect(x,42,dw,62);
+      const dg=g.createLinearGradient(0,50,0,82); dg.addColorStop(0,"#3a525f"); dg.addColorStop(1,"#1f2a32");
+      g.fillStyle=dg; g.fillRect(x+9,52,dw-18,32);
+      g.beginPath(); g.moveTo(cx,42); g.lineTo(cx,104); g.stroke(); });   // ドア中央のすき間
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   let boarders=[]; // 開いたドアから乗降する人
   let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
@@ -923,37 +933,69 @@ const CONFIG = {
       const w=tileToWorld(x,y);
       const seg=new THREE.Mesh(wallSegGeo,wallMat); seg.position.set(w.x,FH/2,w.z); worldRoot.add(seg);
     }
-    // 電車（窓・ドア付き／一部ドアは開いて乗降客）
+    // 電車（複数車両編成・連続窓ライン／ドア／床下機器／屋根＋クーラー／先頭車／開ドアの室内灯）
     boarders=[]; trainDoors=[];
-    const stripes=[0x2b6fb0,0x3f9d4f,0xd5912a,0xb84040,0x6a55a0,0x888f96];
-    const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T, zc=(z0+z1)/2, zlen=(z1-z0)*0.98;
+    const stripes=[0x2b6fb0,0x3f9d4f,0xd5912a,0xb84040,0x6a55a0,0x0f9e8e];
+    const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T, total=(z1-z0)*0.98, NCARS=4, gap=0.5, carLen=total/NCARS-gap;
     TRACKS.forEach((l,i)=>{
-      const xc=(l[0]+l[1]+1)/2*T, carW=(l[1]-l[0]+1)*T*0.66, carH=FH*0.8;
-      const tex=makeTrainSideTex("#"+stripes[i%stripes.length].toString(16).padStart(6,"0"));
-      tex.repeat.set(Math.max(3,Math.round(zlen/4)),1);
-      const side=new THREE.MeshLambertMaterial({map:tex});
-      const plain=new THREE.MeshLambertMaterial({color:0xeef1f3});
-      const mats=[side,side,plain,plain,plain,plain]; // +x,-x,+y,-y,+z,-z
-      const car=new THREE.Mesh(new THREE.BoxGeometry(carW,carH,zlen),mats);
-      car.position.set(xc, carH/2+0.05, zc); worldRoot.add(car);
-      const roof=new THREE.Mesh(new THREE.BoxGeometry(carW*0.96,0.25,zlen),new THREE.MeshLambertMaterial({color:0xb9bfc4}));
-      roof.position.set(xc, carH+0.1, zc); worldRoot.add(roof);
-      // 開いたドア＋乗降客（隣にホームがある側）
-      const doorZ=zc;
-      [[-1,l[0]-1],[1,l[1]+1]].forEach(([sgn,adjX])=>{
-        if(!inLane(adjX)) return;                      // 隣にホームがある側だけ
-        const doorX=xc+sgn*carW/2;
-        const dark=new THREE.Mesh(new THREE.BoxGeometry(0.1,carH*0.7,T*0.7),new THREE.MeshBasicMaterial({color:0x0a0e12}));
-        dark.position.set(doorX, carH*0.4, doorZ); worldRoot.add(dark);                   // 開口
-        const platX=(adjX+0.5)*T;
-        trainDoors.push({x:platX, z:doorZ});   // 電車からの人の出入り口（ホーム側）
-        for(let k=0;k<2;k++){
-          const g=makeHuman(clothColors[(i*3+k)%clothColors.length]);
-          worldRoot.add(g);
-          boarders.push({ group:g, doorX, platX, z:doorZ+(k-0.5)*1.2, phase:Math.random()*6.28 });
+      const xc=(l[0]+l[1]+1)/2*T, carW=(l[1]-l[0]+1)*T*0.62, carH=FH*0.78, by0=0.55;
+      const stripe="#"+stripes[i%stripes.length].toString(16).padStart(6,"0");
+      const side=new THREE.MeshLambertMaterial({map:makeTrainSideTex(stripe)});
+      const endMat=new THREE.MeshLambertMaterial({color:0xe2e7ec});
+      const roofMat=new THREE.MeshLambertMaterial({color:0xbac1c7});
+      const underMat=new THREE.MeshLambertMaterial({color:0x20252a});
+      const glowMat=new THREE.MeshBasicMaterial({color:0xfff0d4,side:THREE.DoubleSide}); glowMat.toneMapped=false;
+      const winMat=new THREE.MeshBasicMaterial({color:0x1b2932,side:THREE.DoubleSide}); winMat.toneMapped=false;
+      const sideAdj=[[-1,l[0]-1],[1,l[1]+1]];
+      for(let c=0;c<NCARS;c++){
+        const cz0=z0 + c*(total/NCARS) + gap/2, czc=cz0+carLen/2;
+        const body=new THREE.Mesh(new THREE.BoxGeometry(carW,carH,carLen), [side,side,endMat,endMat,endMat,endMat]);
+        body.position.set(xc, by0+carH/2, czc); worldRoot.add(body);
+        const under=new THREE.Mesh(new THREE.BoxGeometry(carW*0.9,by0+0.1,carLen*0.98), underMat);
+        under.position.set(xc,(by0+0.1)/2,czc); worldRoot.add(under);                 // 床下/スカート
+        const roof=new THREE.Mesh(new THREE.BoxGeometry(carW*0.86,0.34,carLen*0.99), roofMat);
+        roof.position.set(xc, by0+carH+0.1, czc); worldRoot.add(roof);
+        const ac=new THREE.Mesh(new THREE.BoxGeometry(carW*0.5,0.28,carLen*0.42), underMat);
+        ac.position.set(xc, by0+carH+0.3, czc); worldRoot.add(ac);                     // クーラー
+        if(c===0||c===NCARS-1){                                                        // 先頭車の前面窓
+          const fw=new THREE.Mesh(new THREE.PlaneGeometry(carW*0.72,carH*0.36), winMat);
+          fw.position.set(xc, by0+carH*0.62, c===0?cz0-0.05:cz0+carLen+0.05); worldRoot.add(fw);
         }
-      });
+        sideAdj.forEach(([sgn,adjX])=>{                                                // ホーム側の開ドア
+          if(!inLane(adjX)) return;
+          const platX=(adjX+0.5)*T, dxs=xc+sgn*carW/2;
+          [0.28,0.72].forEach((frac,di)=>{
+            const dz=cz0+carLen*frac;
+            const open=new THREE.Mesh(new THREE.BoxGeometry(0.14,carH*0.62,1.35), new THREE.MeshBasicMaterial({color:0x0a0e12}));
+            open.position.set(dxs, by0+carH*0.4, dz); worldRoot.add(open);              // 開口
+            const glow=new THREE.Mesh(new THREE.PlaneGeometry(1.25,carH*0.55), glowMat);
+            glow.position.set(dxs - sgn*0.28, by0+carH*0.38, dz); glow.rotation.y=sgn>0?-Math.PI/2:Math.PI/2; worldRoot.add(glow); // 室内灯
+            trainDoors.push({x:platX, z:dz});
+            if(di===0 && c%2===0){ for(let k=0;k<2;k++){ const gh=makeHuman(clothColors[(i*3+k)%clothColors.length]); worldRoot.add(gh);
+              boarders.push({ group:gh, doorX:dxs, platX, z:dz+(k-0.5)*1.0, phase:Math.random()*6.28 }); } }
+          });
+        });
+      }
     });
+    // ホームの吊り下げ案内サイン（◯番線 のりば）
+    const psBlank=new THREE.MeshLambertMaterial({color:0x171c22});
+    LANES.forEach(([x0,x1],li)=>{
+      const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
+      for(const zf of [0.3,0.7]){
+        const z=(PLAT_TOP + (PLAT_BOT-PLAT_TOP)*zf)*T;
+        const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.25,0.55,0.12), [psBlank,psBlank,psBlank,psBlank,face,face]);
+        sign.position.set(cx, FH-0.55, z); worldRoot.add(sign);
+        const pole=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.45,0.07), psBlank);
+        pole.position.set(cx, FH-0.27, z); worldRoot.add(pole);
+      }
+    });
+  }
+  function platformSignTex(n){
+    const w=256,hh=72,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle="#3a444d"; g.lineWidth=3; g.strokeRect(3,3,w-6,hh-6);
+    g.fillStyle="#ffd23a"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 40px sans-serif"; g.fillText(n+"番線",96,38);
+    g.fillStyle="#fff"; g.font="bold 26px sans-serif"; g.fillText("のりば",200,38);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   // 乗降客：ドアとホームの間を行き来
   function updateBoarders(t){
