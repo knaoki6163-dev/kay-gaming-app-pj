@@ -114,6 +114,7 @@ const CONFIG = {
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
   CHASER_FLOOR_TIME: 22,// 敵が1フロアを巡回し続ける時間(秒)。これを過ぎると別フロアへ入れ替わる
+  START_GRACE: 10,      // スタートから この秒数は敵に探知されない（猶予）
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
   GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
@@ -243,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.81";
+  const APP_VERSION = "Ver.82";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1773,7 +1774,7 @@ const CONFIG = {
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
       let sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
       if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
-      let see=same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level);
+      let see=gameTime>=C.START_GRACE && same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level); // 開始直後は探知なし
       if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
       if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY); }
       else if(chaser.mem>0) chaser.mem-=dt;
@@ -2187,7 +2188,7 @@ const CONFIG = {
     updateToiletUrge(dt);   // 尿意（予兆→猶予→失敗）
   }
   function checkResult(){
-    for(const chaser of chasers){
+    if(gameTime>=C.START_GRACE) for(const chaser of chasers){   // 開始直後の猶予中は捕まらない
       if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
     }
     if(player.level===NF){
@@ -2274,7 +2275,8 @@ const CONFIG = {
       carryEl.classList.toggle("hidden", !carrying);   // 連れている間の明示表示
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
-      subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　WASD移動・C:しゃがむ・マウス視点";
+      const graceLeft = Math.ceil(C.START_GRACE-gameTime);
+      subEl.textContent = (graceLeft>0? "🛡 安全（敵探知なし）あと"+graceLeft+"秒　/　" : ("敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　"))+"WASD移動・C:しゃがむ・マウス視点";
     }
     // 敵に見つかって追われている間は画面周囲を赤くチカチカ（サイレント追跡は除く）
     const chased = running && chasers.some(c=>c.showAlert);
