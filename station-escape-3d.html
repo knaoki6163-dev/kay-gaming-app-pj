@@ -101,7 +101,7 @@ const CONFIG = {
   TOILET_DIST: 5.0,     // トイレにこの距離まで近づくと用を足せる（解消）
   TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
   CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
-  CROWD_SURGE: 220,     // 到着時にホームへ集まる通行人の数
+  CROWD_SURGE: 1100,    // 到着時にホームへ集まる通行人の数（電車から大量に＝従来の5倍）
   CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.85";
+  const APP_VERSION = "Ver.86";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
