@@ -20,6 +20,9 @@
   #floor { position:fixed; top:8px; left:10px; z-index:8; font-size:15px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 10px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  #carry { position:fixed; top:40px; left:10px; z-index:8; font-size:15px; font-weight:bold;
+    color:#fff2c0; background:rgba(150,70,10,.9); padding:4px 12px; border-radius:6px;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); }
   #timer { position:fixed; top:8px; right:12px; z-index:8; font-size:17px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 12px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
@@ -90,10 +93,10 @@ const CONFIG = {
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
   KONBINI_DIST: 6.0,    // コンビニにこの距離まで近づくと酔っ払いが立ち止まる
   KONBINI_STOP: 4.0,    // 立ち止まる秒数（酒を求める）
-  TOILET_INTERVAL_MIN: 22, // 連れている間、次の尿意までの最短秒数
-  TOILET_INTERVAL_MAX: 45, // 〃 最長秒数
-  TOILET_WARN: 4.0,     // 予兆（猶予が始まる前の警告）秒数
-  TOILET_LIMIT: 13.0,   // 予兆後、トイレに着くまでの猶予秒数（超過でGAME OVER）
+  TOILET_INTERVAL_MIN: 35, // 連れている間、次の尿意までの最短秒数
+  TOILET_INTERVAL_MAX: 70, // 〃 最長秒数
+  TOILET_WARN: 7.0,     // 予兆（猶予が始まる前の警告）秒数
+  TOILET_LIMIT: 28.0,   // 予兆後、トイレに着くまでの猶予秒数（超過でGAME OVER）
   TOILET_DIST: 5.0,     // トイレにこの距離まで近づくと用を足せる（解消）
   TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
   CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
@@ -145,6 +148,7 @@ const CONFIG = {
 
 <div id="app"></div>
 <div id="floor" class="hidden"></div>
+<div id="carry" class="hidden">🍶 酔っ払いを連れている（走れない）</div>
 <div id="verHud"></div>
 <div id="muteBtn" title="音のオン/オフ">🔊</div>
 <div id="mapToggle" class="hidden">🗺 たたむ（M）</div>
@@ -232,12 +236,13 @@ const CONFIG = {
   }
   mapToggle.addEventListener("click", e=>{ e.stopPropagation(); setMapCollapsed(!mapCollapsed); });
   const floorEl = document.getElementById("floor");
+  const carryEl = document.getElementById("carry");
   const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.79";
+  const APP_VERSION = "Ver.80";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1582,16 +1587,17 @@ const CONFIG = {
   function startGame(){
     RNG = mulberry32(C.SEED);   // 毎回同じマップにする
     generateAllFloors(); findStairs(); cleanupDeadEnds();
-    const s=platformStartTile();    // 5つのホームのどれかをランダムに選んで開始（ホームを記録）
-    buildWorld();                   // 地下2階の敵を同じホームに置くため開始ホーム確定後に構築
-    player.x=s.x; player.z=s.z; player.y=0; player.yaw=0; player.pitch=0; player.level=1;
-    buildDrunkAndKonbini(s.x, s.z, 1);   // 酔っ払い＆コンビニを配置
-    goalEl.textContent="▶ 地下で酔っ払いを探せ";
+    platformStartTile();            // 地下2階の敵の配置レーンだけランダムに決める（プレイヤー開始位置には使わない）
+    buildWorld();                   // exits / correctExitNo はここで確定
+    // プレイヤーは「地上の指定出口」からスタート（そこから地下へ降りて酔っ払いを探し、ここへ連れ戻す）
+    const startExit = exits.find(e=>e.no===correctExitNo) || exits[0];
+    player.x=startExit.sx; player.z=startExit.sz; player.y=(NF-1)*FH; player.yaw=0; player.pitch=0; player.level=NF; player.plevel=NF;
+    buildDrunkAndKonbini(player.x, player.z, NF);   // 酔っ払い＆コンビニ（地下）を配置
+    goalEl.textContent="▶ 地下で酔っ払いを探せ（"+correctExitNo+"番出口から地下へ）";
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
     gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden");
-    player.plevel=1;   // 階移動の効果音用
     const showMap = C.SHOW_MAP && !userMode;   // ユーザープレイ時はマップを消す
     if(showMap){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
       mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden"); mapToggle.classList.remove("hidden");
@@ -1614,7 +1620,7 @@ const CONFIG = {
     } else {
       resultInfo.innerHTML = "タイム "+fmtTime(gameTime);
     }
-    resultScreen.classList.remove("hidden"); cross.classList.add("hidden");
+    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden");
     if(cleared) sfxClear(); else sfxOver(); }
 
   function beginOrResume(asUser){
@@ -1653,7 +1659,8 @@ const CONFIG = {
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    const spd = (carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED)) * crowdDrag(); // 人混みで減速
+    const onStair = isStairTileAt(player.x,player.z);        // 階段の上では人混み減速をかけない（遅くならない）
+    const spd = (carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED)) * (onStair?1:crowdDrag());
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
@@ -2028,8 +2035,9 @@ const CONFIG = {
   }
   function buildToilets(){
     toilets=[];
-    for(let f=1;f<=NF;f++){
+    for(let f=1;f<=NF;f++)for(let n=0;n<3;n++){   // 各フロアに3か所ずつ（猶予内に着きやすく）
       const tk=randUndergroundTile(f,false), w=tileToWorld(tk.x,tk.y);
+      if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*5)) continue;   // 近すぎる重複は避ける
       worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z));
       const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
       beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
@@ -2215,7 +2223,8 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=drunkMsg;
-      else goalEl.textContent = carrying ? ("▶ "+correctExitNo+"番出口（地上）へ送り届けろ") : "▶ 地下で酔っ払いを探せ（黄色い光の柱が目印）";
+      else goalEl.textContent = carrying ? ("▶ "+correctExitNo+"番出口（地上）へ酔っ払いを連れ戻せ") : "▶ 地下で酔っ払いを探せ（黄色い光の柱が目印）";
+      carryEl.classList.toggle("hidden", !carrying);   // 連れている間の明示表示
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       subEl.textContent = "敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　WASD移動・C:しゃがむ・マウス視点";
