@@ -237,7 +237,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.74";
+  const APP_VERSION = "Ver.75";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1694,16 +1694,14 @@ const CONFIG = {
   // 1歩動かす（dir=希望方向。allowStair=trueなら階段に乗れる＝徘徊者は乗らない）
   function pedMoveDir(p, vx, vz, dt, allowStair){
     let dodge=false;
-    if(p.level===player.level){
+    // 階段(乗車)中はプレイヤー回避をしない＝手すりに押し込まれて止まる/合体するのを防ぐ（プレイヤーは素通りできる）
+    if(!allowStair && p.level===player.level){
       const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
-      // 階段上ではプレイヤーをより強く避け、ぶつかったら素早く退く（プレイヤー優先）
-      const R=allowStair? C.PED_AVOID_R*1.7 : C.PED_AVOID_R;
-      const wMul=allowStair? 3.6 : 2.0, near=allowStair? 1.8 : 1.1;
-      if(d<R && d>0.001){ const w=(R-d)/R*wMul; vx+=dx/d*w; vz+=dz/d*w;
-        if(d<near){ vx=dx/d; vz=dz/d; dodge=true; } }
+      if(d<C.PED_AVOID_R && d>0.001){ const w=(C.PED_AVOID_R-d)/C.PED_AVOID_R*2.0; vx+=dx/d*w; vz+=dz/d*w;
+        if(d<1.1){ vx=dx/d; vz=dz/d; dodge=true; } }
     }
     const L=Math.hypot(vx,vz); if(L>0.0001){ vx/=L; vz/=L; }
-    const sp= dodge? C.PED_DODGE_SPEED*(allowStair?1.7:1)
+    const sp= dodge? C.PED_DODGE_SPEED
                    : (allowStair? C.PED_SPEED*1.8 : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED)); // 階段は速く通り抜け＝詰まりにくく
     const nx=vx*sp*dt, nz=vz*sp*dt, f=p.level;
     const ok=(X,Z)=> allowStair ? entCanStand(X,Z,PED_R,f)
