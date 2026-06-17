@@ -250,7 +250,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.91";
+  const APP_VERSION = "Ver.92";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -722,6 +722,7 @@ const CONFIG = {
   let upField={};   // 各地下フロアから上の階段へ向かう経路場（案内看板の正しい向きの判定用）
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
+  let statDetect=0, statDrop=0;   // ランク評価用：見つかった回数 / 酔っ払いを手放した回数
   // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
   const SHINJUKU_LINES=[{name:"山手線",en:"Yamanote Line",col:0x9acd32},{name:"中央線",en:"Chuo Line",col:0xf15a22},
     {name:"埼京線",en:"Saikyo Line",col:0x00a650},{name:"湘南新宿ライン",en:"Shonan-Shinjuku Line",col:0xe4002b},
@@ -1666,15 +1667,31 @@ const CONFIG = {
   }
   function pauseToStart(){ if(!running)return; running=false;
     startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
+  const RANKS=["S","A","B","C","D","E"];
+  const RANK_COLORS=["#ffd23a","#ff6a3a","#4ab0e2","#5fd36a","#b0b6bd","#7a8088"];
+  // タイムからの基準ランク値（0=S … 5=E）。区切り：3分未満→S, 5分→A, 6分→B, 8分→C, 9分→D, 10分以上→E
+  function timeRankValue(t){
+    const pts=[[180,0],[300,1],[360,2],[480,3],[540,4],[600,5]];
+    if(t<=pts[0][0]) return 0; if(t>=pts[pts.length-1][0]) return 5;
+    for(let i=1;i<pts.length;i++){ if(t<=pts[i][0]){ const a=pts[i-1],b=pts[i]; return a[1]+(b[1]-a[1])*(t-a[0])/(b[0]-a[0]); } }
+    return 5;
+  }
+  function computeRankIndex(t){
+    let v=timeRankValue(t);
+    v += statDetect*0.35 + statDrop*0.5;                 // 見つかった/手放した回数ぶん悪化（タイムのみで決まらない）
+    if(statDetect===0 && statDrop===0) v -= 0.4;         // ノーミスは少し優遇
+    return Math.max(0, Math.min(5, Math.round(v)));
+  }
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
     if(cleared){
-      const t=gameTime, score=Math.round(600000/(t+30));                 // 早いほど高得点（時間制限なし）
-      const rank = t<60?"S":t<100?"A":t<160?"B":t<240?"C":"D";
-      let best=0; try{ best=parseInt(localStorage.getItem("station_best_score"))||0; }catch(e){}
-      const isBest = score>best; if(isBest){ try{ localStorage.setItem("station_best_score", String(score)); }catch(e){} }
-      resultInfo.innerHTML = "送り届け成功！　タイム "+fmtTime(t)+"　/　スコア <b>"+score+"</b>　ランク <b>"+rank+"</b>"
-        + (best||isBest ? "<br><span style='font-size:15px;color:#9aa3ad'>ベスト "+(isBest?(score+"　★更新！"):best)+"</span>" : "");
+      const t=gameTime, ri=computeRankIndex(t);
+      const row=RANKS.map((r,i)=> i===ri
+        ? "<span style='font-size:46px;font-weight:900;color:"+RANK_COLORS[i]+";text-shadow:0 0 10px "+RANK_COLORS[i]+"'>"+r+"</span>"
+        : "<span style='font-size:26px;opacity:.35'>"+r+"</span>").join(" ");
+      resultInfo.innerHTML = "送り届け成功！　タイム "+fmtTime(t)+"　/　見つかった "+statDetect+"回・手放し "+statDrop+"回"
+        + "<br><br><div style='letter-spacing:6px'>"+row+"</div>"
+        + "<br><span style='font-size:15px;color:#9aa3ad'>あなたのランク：<b style='color:"+RANK_COLORS[ri]+"'>"+RANKS[ri]+"</b></span>";
     } else {
       resultInfo.innerHTML = "タイム "+fmtTime(gameTime);
     }
@@ -2097,7 +2114,7 @@ const CONFIG = {
     return tiles[(Math.random()*tiles.length)|0];
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
-    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0;
+    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
       for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
@@ -2129,7 +2146,7 @@ const CONFIG = {
   function dropDrunk(){   // W連打ダッシュで手を放す（＝はぐれ）
     if(!carrying || !drunk) return;
     carrying=false; drunk.konbiniDone=false; drunk.stopT=0; if(drunk.beacon) drunk.beacon.visible=true;
-    setDrunkMsg("ダッシュで手が離れた！もう一度連れに行け",3); lostT=2.8; sfxAlert();
+    setDrunkMsg("ダッシュで手が離れた！もう一度連れに行け",3); lostT=2.8; statDrop++; sfxAlert();
   }
   // ---------- トイレ（尿意：予兆→猶予→失敗でGAME OVER） ----------
   function toiletSignTex(){
@@ -2328,7 +2345,7 @@ const CONFIG = {
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.showAlert);
-      if(alert && !alertPrev) sfxAlert();   // 新たに見つかった瞬間の音
+      if(alert && !alertPrev){ sfxAlert(); statDetect++; }   // 新たに見つかった瞬間（回数を記録）
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=drunkMsg;
