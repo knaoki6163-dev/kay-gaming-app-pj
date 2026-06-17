@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.88";
+  const APP_VERSION = "Ver.89";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -606,9 +606,10 @@ const CONFIG = {
     for(let f=2;f<=NF;f++) slabOmit[f]=new Set();
     const L=C.STAIR_LEN; const usedW=new Set(); const usedR=new Set(); const placed=[];
     // 地下2階→地下1階：各ホームの両端に1マス幅の階段（5×2=10本、同位置）
-    for(const [x0,x1] of LANES){
+    LANES.forEach(([x0,x1],laneIdx)=>{
       for(const [y0,up] of [[TOP_Y0,-1],[BOT_Y0,1]]){
         const s=makePlatStair(x0,y0,up);
+        s.lane=laneIdx;   // この階段が通じるホーム（路線）の番号
         carvePlatStair(s);
         s.run.forEach(([x,y])=>{ const k=x+","+y; stairTileSet.add(k); stairTileLevel[k]=1; slabOmit[2].add(k); });
         [...s.run,s.entry,s.exit,s.beyond].forEach(t=>usedW.add(t[0]+","+t[1]));
@@ -616,7 +617,7 @@ const CONFIG = {
         placed.push({cxTile:s.cxTile,cyTile:s.cyTile});
         stairs.push(s);
       }
-    }
+    });
     // 地下1階→地上：ランダム
     for(let lvl=2; lvl<NF; lvl++){
       let n=0, att=0;
@@ -1078,6 +1079,45 @@ const CONFIG = {
     g.fillStyle="#555"; g.font="18px sans-serif"; g.textAlign="left"; g.fillText("◀ きた",16,40); g.textAlign="right"; g.fillText("ひがし ▶",w-16,40);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
+  // ---------- 路線案内サイン（地下1階の各ホーム階段／地上の各出口） ----------
+  function lineSignTex(line, sub, isTarget){
+    const w=320,hh=80,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#10151b"; g.fillRect(0,0,w,hh);
+    g.fillStyle="#"+line.col.toString(16).padStart(6,"0"); g.fillRect(0,0,18,hh);                 // 路線カラー帯
+    g.strokeStyle=isTarget?"#ffd23a":"#39424d"; g.lineWidth=isTarget?6:3; g.strokeRect(3,3,w-6,hh-6);
+    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 38px sans-serif"; g.fillText(line.name,34,sub?30:42);
+    if(sub){ g.fillStyle="#aeb6bd"; g.font="bold 24px sans-serif"; g.fillText(sub,34,62); }
+    if(isTarget){ g.fillStyle="#ffd23a"; g.textAlign="right"; g.font="bold 22px sans-serif"; g.fillText("★目標",w-12,28); }
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function lineDirectoryTex(){
+    const w=256,hh=320,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#0e141b"; g.fillRect(0,0,w,hh); g.strokeStyle="#39424d"; g.lineWidth=4; g.strokeRect(4,4,w-8,hh-8);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 24px sans-serif"; g.fillText("地下ホーム 路線",w/2,30);
+    for(let i=0;i<SHINJUKU_LINES.length;i++){ const ln=SHINJUKU_LINES[i], y=66+i*46, isT=(i===targetLane);
+      g.fillStyle="#"+ln.col.toString(16).padStart(6,"0"); g.fillRect(18,y-15,30,30);
+      g.fillStyle=isT?"#ffd23a":"#fff"; g.textAlign="left"; g.font="bold 26px sans-serif"; g.fillText(ln.name+(isT?" ★":""),58,y); }
+    g.fillStyle="#aeb6bd"; g.textAlign="center"; g.font="bold 18px sans-serif"; g.fillText("階段で地下へ",w/2,hh-22);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildLineSigns(){
+    const blank=new THREE.MeshLambertMaterial({color:0x10151b});
+    // 地下1階：各ホーム階段の上(B1側)に「○○線 ▼ホーム」サイン
+    for(const s of stairs){ if(s.lvl!==1 || s.lane==null) continue;
+      const ln=SHINJUKU_LINES[s.lane%SHINJUKU_LINES.length], w=tileToWorld(s.exit[0],s.exit[1]);
+      const face=new THREE.MeshBasicMaterial({map:lineSignTex(ln,"▼ホーム",s.lane===targetLane)}); face.toneMapped=false;
+      const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.4,0.7,0.12), [blank,blank,blank,blank,face,face]);
+      sign.position.set(w.x, FH+2.2, w.z); worldRoot.add(sign);
+      const pole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), blank); pole.position.set(w.x, FH+2.55, w.z); worldRoot.add(pole);
+    }
+    // 地上：各出口の構内側に路線案内ボード（吊り下げ・両面）
+    const dirFace=new THREE.MeshBasicMaterial({map:lineDirectoryTex(),side:THREE.DoubleSide}); dirFace.toneMapped=false;
+    const base=(NF-1)*FH;
+    for(const e of exits){
+      const board=new THREE.Mesh(new THREE.PlaneGeometry(1.5,1.9), dirFace);
+      board.position.set(e.sx, base+2.7, e.sz); board.lookAt(2*e.sx-e.x, base+2.7, 2*e.sz-e.z); worldRoot.add(board); // 構内側を向く
+    }
+  }
   // 乗降客：ドアとホームの間を行き来
   function updateBoarders(t){
     for(const b of boarders){
@@ -1150,6 +1190,7 @@ const CONFIG = {
       }
     }
     buildPlatform();   // 地下2階＝プラットホーム
+    buildLineSigns();  // 路線案内サイン（地下1階の各ホーム階段／地上の各出口）
 
     // 階段（段々のステップ＋横の手すり。ライトは付けない）
     const stepMat=new THREE.MeshLambertMaterial({color:0x9aa0a6});
