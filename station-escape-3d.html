@@ -291,7 +291,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.98";
+  const APP_VERSION = "Ver.99";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -813,6 +813,34 @@ const CONFIG = {
   const headGeo=new THREE.SphereGeometry(0.17,12,12);
   const skinMat=new THREE.MeshLambertMaterial({color:0xd8a87c});
   const legMat=new THREE.MeshLambertMaterial({color:0x2c3038});
+  // 顔（前）＝肌＋目、後頭部・頭頂＝髪。これで全ての人型の前後の向きが分かる
+  const HAIR_COL="#2e2620";
+  function headTex(){
+    const W=256,H=128,cv=document.createElement("canvas"); cv.width=W; cv.height=H; const g=cv.getContext("2d");
+    g.fillStyle="#d8a87c"; g.fillRect(0,0,W,H);                 // 肌
+    g.fillStyle=HAIR_COL;
+    g.fillRect(0,0,W,H*0.30);                                  // 頭頂の髪（全周）
+    g.fillRect(W*0.5,0,W*0.5,H*0.80);                          // 後頭部の髪（u=0.5〜1.0＝背面側）
+    const fx=W*0.25, ey=H*0.47;                                // 正面(+Z)は u=0.25 ＝ テクスチャの1/4位置
+    g.fillRect(fx-W*0.085, H*0.29, W*0.17, H*0.055);           // 前髪
+    g.fillStyle="#23303a";                                     // 目
+    g.beginPath(); g.arc(fx-W*0.052, ey, W*0.02, 0, 7); g.fill();
+    g.beginPath(); g.arc(fx+W*0.052, ey, W*0.02, 0, 7); g.fill();
+    g.strokeStyle="#9c5a4a"; g.lineWidth=3; g.beginPath();     // 口
+    g.arc(fx, ey+H*0.17, W*0.028, 0.18*Math.PI, 0.82*Math.PI); g.stroke();
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  const headMat=new THREE.MeshLambertMaterial({map:headTex()});   // 通行人(インスタンス)用：顔つきの頭
+  // makeHuman 用：頭の色は維持しつつ、髪キャップ＋目を子メッシュで付与
+  const hairGeo=new THREE.SphereGeometry(0.183,12,8,0,Math.PI*2,0,Math.PI*0.55);
+  const hairMat=new THREE.MeshLambertMaterial({color:0x2e2620});
+  const eyeGeo=new THREE.SphereGeometry(0.028,6,6);
+  const eyeMat=new THREE.MeshLambertMaterial({color:0x20282e});
+  function addFace(head){
+    const hair=new THREE.Mesh(hairGeo, hairMat); hair.position.y=0.012; head.add(hair);  // 頭頂の髪
+    const eL=new THREE.Mesh(eyeGeo, eyeMat); eL.position.set(-0.062,0.0,0.152); head.add(eL); // 正面(+Z)の目
+    const eR=new THREE.Mesh(eyeGeo, eyeMat); eR.position.set( 0.062,0.0,0.152); head.add(eR);
+  }
   // 敵(赤)と紛らわしいので赤系は入れない
   const clothColors=[0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0xb0892f,0x2f6f73,0x445064,0xcfcfcf];
   function makeHuman(cloth, legColor, headColor){
@@ -820,6 +848,7 @@ const CONFIG = {
     const legs=new THREE.Mesh(legGeo, legColor?new THREE.MeshLambertMaterial({color:legColor}):legMat); legs.position.y=0.4;
     const torso=new THREE.Mesh(torsoGeo,new THREE.MeshLambertMaterial({color:cloth})); torso.position.y=1.05;
     const head=new THREE.Mesh(headGeo, headColor?new THREE.MeshLambertMaterial({color:headColor}):skinMat); head.position.y=1.5;
+    addFace(head);                                             // 髪＋目で前後の向きを明示
     g.add(legs,torso,head); return g;
   }
 
@@ -1663,7 +1692,7 @@ const CONFIG = {
     pedTorsoInsts={};
     if(!n){ pedLegsInst=pedHeadInst=null; return; }
     pedLegsInst=new THREE.InstancedMesh(legGeo, legMat, n);
-    pedHeadInst=new THREE.InstancedMesh(headGeo, skinMat, n);
+    pedHeadInst=new THREE.InstancedMesh(headGeo, headMat, n);
     pedLegsInst.frustumCulled=false; pedHeadInst.frustumCulled=false;
     worldRoot.add(pedLegsInst, pedHeadInst);
     const counts={};
@@ -2084,7 +2113,7 @@ const CONFIG = {
         chaser.floorTimer=C.CHASER_FLOOR_TIME*(0.6+Math.random()*0.8);
       }
       chaser.group.position.set(chaser.x,chaser.y+FOOT_LIFT,chaser.z);
-      if(chasing){ chaser.group.lookAt(player.x, chaser.y+1+FOOT_LIFT, player.z); }
+      if(chasing){ chaser.group.rotation.set(0,Math.atan2(player.x-chaser.x, player.z-chaser.z),0); } // 追跡中は顔(前)をプレイヤーへ向ける
       else if(Math.hypot(mvx,mvz)>0.0001){ chaser.group.rotation.set(0,Math.atan2(mvx,mvz),0); }   // 巡回中は進行方向を向く
     }
   }
