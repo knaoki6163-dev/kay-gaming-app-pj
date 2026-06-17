@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.89";
+  const APP_VERSION = "Ver.90";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -717,8 +717,9 @@ const CONFIG = {
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
   // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
-  const SHINJUKU_LINES=[{name:"山手線",col:0x9acd32},{name:"中央線",col:0xf15a22},{name:"埼京線",col:0x00a650},
-    {name:"湘南新宿ライン",col:0xe4002b},{name:"小田急線",col:0x0072bc}];
+  const SHINJUKU_LINES=[{name:"山手線",en:"Yamanote Line",col:0x9acd32},{name:"中央線",en:"Chuo Line",col:0xf15a22},
+    {name:"埼京線",en:"Saikyo Line",col:0x00a650},{name:"湘南新宿ライン",en:"Shonan-Shinjuku Line",col:0xe4002b},
+    {name:"小田急線",en:"Odakyu Line",col:0x0072bc}];
   let targetLane=0;
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
   let crowdTimer=8, crowdActive=false, crowdEndT=0, baseB2Target=0;   // 電車到着で起きる動的な人混み
@@ -1046,7 +1047,7 @@ const CONFIG = {
     const ekiFace=new THREE.MeshBasicMaterial({map:ekimeiTex()}); ekiFace.toneMapped=false;
     LANES.forEach(([x0,x1],li)=>{
       const ln=SHINJUKU_LINES[li%SHINJUKU_LINES.length];
-      const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1, ln, li===targetLane), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
+      const cx=(x0+x1+1)/2*T, stex=platformSignTex(li+1, ln), face=new THREE.MeshBasicMaterial({map:stex}); face.toneMapped=false;
       for(const zf of [0.3,0.7]){
         const z=(PLAT_TOP + (PLAT_BOT-PLAT_TOP)*zf)*T;
         const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.25,0.55,0.12), [psBlank,psBlank,psBlank,psBlank,face,face]);
@@ -1061,14 +1062,12 @@ const CONFIG = {
       const epole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.3,0.08), psBlank); epole.position.set(cx,FH-0.35,ez); worldRoot.add(epole);
     });
   }
-  function platformSignTex(n, line, isTarget){
-    const w=320,hh=72,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
-    g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle=isTarget?"#ffd23a":"#3a444d"; g.lineWidth=isTarget?6:3; g.strokeRect(3,3,w-6,hh-6);
-    const lc="#"+(line?line.col:0x888888).toString(16).padStart(6,"0");
-    g.fillStyle=lc; g.fillRect(10,18,16,36);                                  // 路線カラーチップ
-    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 34px sans-serif"; g.fillText((line?line.name:n+"番線"),36,32);
-    g.fillStyle="#aab"; g.font="bold 20px sans-serif"; g.fillText(n+"番線 のりば",36,58);
-    if(isTarget){ g.fillStyle="#ffd23a"; g.textAlign="right"; g.font="bold 22px sans-serif"; g.fillText("★目標",w-14,30); }
+  function platformSignTex(n, line){   // 日英併記
+    const w=340,hh=76,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    g.fillStyle="#141a20"; g.fillRect(0,0,w,hh); g.strokeStyle="#3a444d"; g.lineWidth=3; g.strokeRect(3,3,w-6,hh-6);
+    g.fillStyle="#"+(line?line.col:0x888888).toString(16).padStart(6,"0"); g.fillRect(10,16,16,44);   // 路線カラーチップ
+    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 30px sans-serif"; g.fillText((line?line.name:n+"番線"),36,28);
+    g.fillStyle="#aab"; g.font="bold 16px sans-serif"; g.fillText((line?line.en+"  ":"")+n+"番線 のりば / Platform "+n,36,56);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function ekimeiTex(){   // 駅名標（駅名＋前後の駅＋矢印）
@@ -1080,24 +1079,25 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   // ---------- 路線案内サイン（地下1階の各ホーム階段／地上の各出口） ----------
-  function lineSignTex(line, sub, isTarget){
-    const w=320,hh=80,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+  function lineSignTex(line, subJa, subEn){   // 日英併記
+    const w=360,hh=84,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
     g.fillStyle="#10151b"; g.fillRect(0,0,w,hh);
     g.fillStyle="#"+line.col.toString(16).padStart(6,"0"); g.fillRect(0,0,18,hh);                 // 路線カラー帯
-    g.strokeStyle=isTarget?"#ffd23a":"#39424d"; g.lineWidth=isTarget?6:3; g.strokeRect(3,3,w-6,hh-6);
-    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 38px sans-serif"; g.fillText(line.name,34,sub?30:42);
-    if(sub){ g.fillStyle="#aeb6bd"; g.font="bold 24px sans-serif"; g.fillText(sub,34,62); }
-    if(isTarget){ g.fillStyle="#ffd23a"; g.textAlign="right"; g.font="bold 22px sans-serif"; g.fillText("★目標",w-12,28); }
+    g.strokeStyle="#39424d"; g.lineWidth=3; g.strokeRect(3,3,w-6,hh-6);
+    g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle"; g.font="bold 34px sans-serif"; g.fillText(line.name+(subJa?" "+subJa:""),32,30);
+    g.fillStyle="#aeb6bd"; g.font="bold 19px sans-serif"; g.fillText(line.en+(subEn?"  "+subEn:""),32,60);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function lineDirectoryTex(){
-    const w=256,hh=320,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    const w=300,hh=340,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
     g.fillStyle="#0e141b"; g.fillRect(0,0,w,hh); g.strokeStyle="#39424d"; g.lineWidth=4; g.strokeRect(4,4,w-8,hh-8);
-    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 24px sans-serif"; g.fillText("地下ホーム 路線",w/2,30);
-    for(let i=0;i<SHINJUKU_LINES.length;i++){ const ln=SHINJUKU_LINES[i], y=66+i*46, isT=(i===targetLane);
-      g.fillStyle="#"+ln.col.toString(16).padStart(6,"0"); g.fillRect(18,y-15,30,30);
-      g.fillStyle=isT?"#ffd23a":"#fff"; g.textAlign="left"; g.font="bold 26px sans-serif"; g.fillText(ln.name+(isT?" ★":""),58,y); }
-    g.fillStyle="#aeb6bd"; g.textAlign="center"; g.font="bold 18px sans-serif"; g.fillText("階段で地下へ",w/2,hh-22);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 24px sans-serif"; g.fillText("地下ホーム 路線",w/2,24);
+    g.fillStyle="#aeb6bd"; g.font="bold 15px sans-serif"; g.fillText("Lines / Platforms",w/2,46);
+    for(let i=0;i<SHINJUKU_LINES.length;i++){ const ln=SHINJUKU_LINES[i], y=78+i*50;
+      g.fillStyle="#"+ln.col.toString(16).padStart(6,"0"); g.fillRect(16,y-16,28,32);
+      g.fillStyle="#fff"; g.textAlign="left"; g.font="bold 24px sans-serif"; g.fillText(ln.name,54,y-7);
+      g.fillStyle="#aeb6bd"; g.font="bold 15px sans-serif"; g.fillText(ln.en,54,y+13); }
+    g.fillStyle="#aeb6bd"; g.textAlign="center"; g.font="bold 16px sans-serif"; g.fillText("階段で地下へ / Stairs to platforms",w/2,hh-20);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function buildLineSigns(){
@@ -1105,7 +1105,7 @@ const CONFIG = {
     // 地下1階：各ホーム階段の上(B1側)に「○○線 ▼ホーム」サイン
     for(const s of stairs){ if(s.lvl!==1 || s.lane==null) continue;
       const ln=SHINJUKU_LINES[s.lane%SHINJUKU_LINES.length], w=tileToWorld(s.exit[0],s.exit[1]);
-      const face=new THREE.MeshBasicMaterial({map:lineSignTex(ln,"▼ホーム",s.lane===targetLane)}); face.toneMapped=false;
+      const face=new THREE.MeshBasicMaterial({map:lineSignTex(ln,"ホーム▼","Platform")}); face.toneMapped=false;
       const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.4,0.7,0.12), [blank,blank,blank,blank,face,face]);
       sign.position.set(w.x, FH+2.2, w.z); worldRoot.add(sign);
       const pole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), blank); pole.position.set(w.x, FH+2.55, w.z); worldRoot.add(pole);
