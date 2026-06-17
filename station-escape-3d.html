@@ -130,7 +130,9 @@ const CONFIG = {
   TOILET_INTERVAL_MAX: 70, // 〃 最長秒数
   TOILET_WARN: 7.0,     // 予兆（猶予が始まる前の警告）秒数
   TOILET_LIMIT: 28.0,   // 予兆後、トイレに着くまでの猶予秒数（超過でGAME OVER）
+  TOILET_CRITICAL: 10.0,// 漏れる(GAME OVER)この秒数前から「段階2」の強い警告（赤点滅）
   TOILET_DIST: 5.0,     // トイレにこの距離まで近づくと用を足せる（解消）
+  TOILET_STOP_DUR: 10.0,// トイレでの足止め秒数（この間カウントダウン・解消）
   TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
   CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
   CROWD_SURGE: 1100,    // 到着時にホームへ集まる通行人の数（電車から大量に＝従来の5倍）
@@ -302,7 +304,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.107";
+  const APP_VERSION = "Ver.108";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -332,6 +334,7 @@ const CONFIG = {
     here:{ ja:f=>'現在地: '+f, en:f=>'Floor: '+f },
     goalInit:{ ja:(ln,n)=>'▶ 地下2階の【'+ln+'】ホームの酔っ払いを'+n+'番出口へ連れ戻せ', en:(ln,n)=>'▶ Bring the drunk from the B2 '+ln+' platform to Exit '+n },
     goalFind:{ ja:ln=>'▶ 地下2階【'+ln+'】ホームの酔っ払いを探せ（黄色い光の柱）', en:ln=>'▶ Find the drunk on the B2 '+ln+' platform (yellow light)' },
+    goalFetch:{ ja:f=>'▶ '+f+'にいる酔っ払いを連れに行け（黄色い光の柱）', en:f=>'▶ Go get the drunk on '+f+' (yellow light)' },
     goalDeliver:{ ja:n=>'▶ '+n+'番出口へ酔っ払いを連れ戻せ', en:n=>'▶ Carry the drunk to Exit '+n },
     subSafe:{ ja:s=>'🛡 安全（敵探知なし）あと'+s+'秒　/　', en:s=>'🛡 Safe (no detection) '+s+'s　/　' },
     subEnemy:{ ja:(st,cr)=>'敵: '+st+cr+'　/　', en:(st,cr)=>'Enemy: '+st+cr+'　/　' },
@@ -348,7 +351,9 @@ const CONFIG = {
     msgDrop:{ ja:'ダッシュで手が離れた！もう一度連れに行け', en:'Dashing made you drop him! Go get him again' },
     msgToiletWarn:{ ja:'酔っ払いがソワソワし始めた…トイレが近いぞ！', en:'The drunk is getting restless… he needs a toilet soon!' },
     msgToiletUrge:{ ja:'もう限界！青い印のトイレへ急げ！', en:'He can\'t hold it! Rush to a blue-marked toilet!' },
-    msgToiletOk:{ ja:'ふぅ…間に合った', en:'Phew… made it in time' },
+    msgToiletCritical:{ ja:'⚠ 漏れる寸前！あと10秒、急いでトイレへ！', en:'⚠ About to burst! 10s left—rush to a toilet!' },
+    msgToiletUse:{ ja:'酔っ払いがトイレ中…10秒待て！', en:'The drunk is in the toilet… wait 10s!' },
+    msgToiletOk:{ ja:'ふぅ…スッキリした', en:'Phew… all relieved' },
     msgToiletFail:{ ja:'間に合わなかった…', en:'Didn\'t make it in time…' },
     msgTrain:{ ja:'🚃 電車が到着！ホームが人混みで動きにくい', en:'🚃 Train arriving! The crowded platform slows you down' },
     msgPicked:{ ja:'酔っ払いを連れた！地上の正しい出口へ送り届けろ', en:'Got the drunk! Deliver him to the correct ground exit' },
@@ -1872,7 +1877,7 @@ const CONFIG = {
 
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
-  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false, wMash=0, lostT=0;
+  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, stepNext=0.2, alertPrev=false, crouching=false, wMash=0, lostT=0;
   let dashBursting=false, dashBurstSpeed=8.0, dashBurstLeft=0, dashRecT=20, dashGrace=0;   // ダッシュ・スタミナ（実行中バースト＋直近終了からの回復計時）
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
@@ -2037,7 +2042,8 @@ const CONFIG = {
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
-    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?0.21:0.42; if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); } }  // 足音（連れている間は倍速）
+    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:0.42;   // 連れている間はランダム間隔の足音
+      if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
     if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
@@ -2500,7 +2506,7 @@ const CONFIG = {
         const mbg=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.26), new THREE.MeshBasicMaterial({color:0x10141a})); mbg.material.toneMapped=false;
         const mfill=new THREE.Mesh(new THREE.PlaneGeometry(1.4,0.2), new THREE.MeshBasicMaterial({color:0x4caf50})); mfill.material.toneMapped=false; mfill.position.z=0.01;
         mg.add(mbg,mfill); mg.visible=false; worldRoot.add(mg);
-        drunk={ x:w.x, z:w.z, level:1, y:0, group:g, beacon, meter:{group:mg,fill:mfill}, sway:Math.random()*6, stopT:0, konbiniDone:false, line:SHINJUKU_LINES[li], _px:w.x, _pz:w.z };
+        drunk={ x:w.x, z:w.z, level:1, y:0, group:g, beacon, meter:{group:mg,fill:mfill}, sway:Math.random()*6, stopT:0, konbiniDone:false, toiletStop:0, toiletCrit:false, line:SHINJUKU_LINES[li], _px:w.x, _pz:w.z };
       } else {
         decoyDrunks.push({ x:w.x, z:w.z, group:g, sway:Math.random()*6 });
       }
@@ -2557,35 +2563,47 @@ const CONFIG = {
     }
   }
   function setToiletBeacons(on){ /* 青い円柱は常時表示（恒久オブジェクト）。尿意でも消さない */ }
-  function resetToiletUrge(){ toiletState="none"; toiletT=C.TOILET_INTERVAL_MIN+Math.random()*(C.TOILET_INTERVAL_MAX-C.TOILET_INTERVAL_MIN); setToiletBeacons(false); }
+  function resetToiletUrge(){ toiletState="none"; toiletT=C.TOILET_INTERVAL_MIN+Math.random()*(C.TOILET_INTERVAL_MAX-C.TOILET_INTERVAL_MIN); if(drunk){drunk.toiletStop=0; drunk.toiletCrit=false;} setToiletBeacons(false); }
   function updateToiletUrge(dt){
     if(!drunk) return;
     if(!carrying){ updateToiletMeter(); return; }   // 連れていない間は尿意を“止める”（リセットしない＝ドロップ&再取得での回避を防止）
+    if(drunk.toiletStop>0){                          // トイレで10秒足止め（カウントダウン）
+      drunk.toiletStop-=dt;
+      if(drunk.toiletStop<=0){ drunk.toiletStop=0; resetToiletUrge(); setDrunkMsg("msgToiletOk",2); sfxFloor(); }
+      updateToiletMeter(); return;
+    }
     if(drunk.stopT>0){ updateToiletMeter(); return; } // コンビニで足止め中は尿意も進めない（猶予を不当に削らない）
     if(toiletState==="none"){
       toiletT-=dt;
       if(toiletT<=0){ toiletState="warn"; toiletT=C.TOILET_WARN; setToiletBeacons(true); setDrunkMsg("msgToiletWarn",3); sfxAlert(); }
     } else if(toiletState==="warn"){
-      toiletT-=dt; if(toiletT<=0){ toiletState="urge"; toiletT=C.TOILET_LIMIT; setDrunkMsg("msgToiletUrge",2.5); }
+      toiletT-=dt; if(toiletT<=0){ toiletState="urge"; toiletT=C.TOILET_LIMIT; drunk.toiletCrit=false; setDrunkMsg("msgToiletUrge",2.5); }
     } else if(toiletState==="urge"){
       toiletT-=dt;
+      // 段階2：漏れる(GAME OVER)10秒前から強い警告（1回）
+      if(toiletT<=C.TOILET_CRITICAL && !drunk.toiletCrit){ drunk.toiletCrit=true; setDrunkMsg("msgToiletCritical",3); sfxAlert(); }
       if(toilets.some(t=> t.level===drunk.level && Math.hypot(drunk.x-t.x,drunk.z-t.z)<C.TOILET_DIST)){
-        resetToiletUrge(); setDrunkMsg("msgToiletOk",2); sfxFloor();
+        drunk.toiletStop=C.TOILET_STOP_DUR; setDrunkMsg("msgToiletUse",2.5); sfxFloor();   // トイレ到着→10秒足止め開始
       } else if(toiletT<=0){ setToiletBeacons(false); setDrunkMsg("msgToiletFail",2); endGame(false); return; }
     }
     updateToiletMeter();
   }
   function updateToiletMeter(){
     if(!drunk||!drunk.meter) return;
-    const show = carrying && toiletState!=="none";
+    const stopping = carrying && drunk.toiletStop>0;
+    const show = carrying && (stopping || toiletState!=="none");
     drunk.meter.group.visible=show; if(!show) return;
-    const prog = toiletState==="urge" ? 1-Math.max(0,toiletT)/C.TOILET_LIMIT : 0.04;  // 予兆中はほぼ空（点滅で知らせる）
+    let prog, col;
+    if(stopping){ prog=Math.max(0,drunk.toiletStop)/C.TOILET_STOP_DUR; col=0x3a9bff; }                     // トイレ中：10→0 カウントダウン（青）
+    else if(toiletState==="urge"){ prog=1-Math.max(0,toiletT)/C.TOILET_LIMIT;                              // 尿意：満タンに近づくほど危険
+      col = (toiletT<=C.TOILET_CRITICAL)?0xe23030:(prog>0.5?0xe8a23a:0x4caf50); }                          // 段階2(残10秒)=赤
+    else { prog=0.04; col=0x4caf50; }
     const fill=drunk.meter.fill;
-    fill.scale.x=Math.max(0.001,prog); fill.position.x=-0.7+0.7*prog;
-    fill.material.color.setHex(prog>0.66?0xe23030:(prog>0.33?0xe8a23a:0x4caf50));
+    fill.scale.x=Math.max(0.001,prog); fill.position.x=-0.7+0.7*prog; fill.material.color.setHex(col);
     const g=drunk.meter.group;
     g.position.set(drunk.x, drunk.y+FOOT_LIFT+2.35, drunk.z); g.quaternion.copy(camera.quaternion);
-    g.scale.setScalar(toiletState==="warn" ? (0.85+0.3*(0.5+0.5*Math.sin(flick*9))) : 1);
+    const flash = (toiletState==="warn") || (toiletState==="urge" && toiletT<=C.TOILET_CRITICAL && !stopping);  // 予兆/漏れる直前は点滅
+    g.scale.setScalar(flash ? (0.8+0.35*(0.5+0.5*Math.sin(flick*9))) : 1);
   }
   // ---------- 動的な人混み（電車到着でホームに通行人が大量に集まる） ----------
   function surgeToPlatform(n){
@@ -2648,7 +2666,8 @@ const CONFIG = {
         setDrunkMsg("msgPicked",3.5); sfxFloor();
       }
     } else {
-      if(drunk.stopT>0){ drunk.stopT-=dt; }                                   // コンビニで立ち止まり中
+      if(drunk.toiletStop>0){ /* トイレで足止め中＝その場で待つ（追従しない） */ }
+      else if(drunk.stopT>0){ drunk.stopT-=dt; }                              // コンビニで立ち止まり中
       else if(konbini && drunk.level===konbini.level && !drunk.konbiniDone && Math.hypot(drunk.x-konbini.x,drunk.z-konbini.z)<C.KONBINI_DIST){
         drunk.stopT=C.KONBINI_STOP; drunk.konbiniDone=true; setDrunkMsg("msgKonbini",3.5); sfxAlert();
       } else {                                                                // プレイヤーの通った道を辿って付いてくる
@@ -2758,7 +2777,9 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=tr(drunkMsg);
-      else goalEl.textContent = carrying ? tr('goalDeliver',correctExitNo) : tr('goalFind', lineName(targetLane));
+      else if(carrying) goalEl.textContent = tr('goalDeliver',correctExitNo);
+      else if(drunk && drunk.level!==1) goalEl.textContent = tr('goalFetch', floorName(drunk.level));   // 手放した後＝酔っ払いの現在フロアを指す
+      else goalEl.textContent = tr('goalFind', lineName(targetLane));
       carryEl.classList.toggle("hidden", !carrying);            // 連れている＝緑
       lostEl.classList.toggle("hidden", carrying || lostT<=0);  // はぐれた＝赤（一定時間）
       // ミッション・ボックス（酔っぱらいを助ける＝回収中で緑チェック、手放すと赤✖に戻る）
