@@ -302,7 +302,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.106";
+  const APP_VERSION = "Ver.107";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2451,31 +2451,23 @@ const CONFIG = {
     g.beginPath(); g.moveTo(90,46); g.lineTo(74,90); g.lineTo(106,90); g.closePath(); g.fill(); g.fillRect(84,90,5,28); g.fillRect(92,90,5,28);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
-  function buildToiletBlock(cx,cz,baseY,dirX,dirZ){   // 壁に密着するトイレ正面（入口＋WC看板＋男女ピクト＋突き出し看板）
+  function buildToiletBlock(cx,cz,baseY,dirX,dirZ){   // 壁に埋め込む店舗サイズのトイレ（正面＝壁面、本体は壁の中へ）
     if(!_toiletIconTexC) _toiletIconTexC=toiletIconTex();
     const g=new THREE.Group();
-    const W=T*0.92, H=FH*0.66, D=T*0.62;             // W=壁に沿う幅 / D=通路へ出る奥行
-    const bz=-(T/2 - D/2);                            // 背面を壁(タイル端=-T/2)に密着
+    const W=T*1.05, H=FH*0.9, D=T*0.72;              // 店舗ほどの大きさ
+    const wallZ=-T/2, front=wallZ+0.18, bodyZ=front-D/2;  // 正面はほぼ壁面／本体は壁の中へ埋め込む
     const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D), new THREE.MeshLambertMaterial({color:0xeef2f6}));
-    body.position.set(0,H/2,bz); g.add(body);
-    const front=bz+D/2;                              // 通路側の正面の z
-    const doorM=new THREE.MeshBasicMaterial({color:0x12161a}); doorM.toneMapped=false;
+    body.position.set(0,H/2,bodyZ); g.add(body);
+    const frame=new THREE.Mesh(new THREE.BoxGeometry(W+0.3,H+0.3,0.22), new THREE.MeshLambertMaterial({color:0x1d4ed8}));
+    frame.position.set(0,H/2,front); g.add(frame);    // 店構え（青枠）
+    const doorM=new THREE.MeshBasicMaterial({color:0x0d1116}); doorM.toneMapped=false;
     const iconM=new THREE.MeshBasicMaterial({map:_toiletIconTexC}); iconM.toneMapped=false;
-    // 入口（暗がり）×2 ＋ 男女ピクト
     [-1,1].forEach(s=>{
-      const dr=new THREE.Mesh(new THREE.PlaneGeometry(W*0.32,H*0.78), doorM); dr.position.set(s*W*0.22, H*0.4, front+0.02); g.add(dr);
-      const ic=new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.7), iconM); ic.position.set(s*W*0.22, H*0.86, front+0.03); g.add(ic);
+      const dr=new THREE.Mesh(new THREE.PlaneGeometry(W*0.34,H*0.55), doorM); dr.position.set(s*W*0.22, H*0.30, front+0.02); g.add(dr);  // 入口（暗い開口）
+      const ic=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.85), iconM); ic.position.set(s*W*0.22, H*0.70, front+0.03); g.add(ic);     // 男女ピクト
     });
-    // 正面の大看板（通路を向く）
     const signM=new THREE.MeshBasicMaterial({map:toiletSignTex()}); signM.toneMapped=false;
-    const sign=new THREE.Mesh(new THREE.PlaneGeometry(W*0.92,H*0.28), signM);
-    sign.position.set(0,H+H*0.18, front+0.02); g.add(sign);
-    const signBack=new THREE.Mesh(new THREE.BoxGeometry(W*0.96,H*0.32,0.18), new THREE.MeshLambertMaterial({color:0x1d4ed8}));
-    signBack.position.set(0,H+H*0.18, front-0.07); g.add(signBack);
-    // 通路に突き出す吊り看板（左右どちらからでも見える）
-    const blM=new THREE.MeshBasicMaterial({map:toiletSignTex(),side:THREE.DoubleSide}); blM.toneMapped=false;
-    const blade=new THREE.Mesh(new THREE.PlaneGeometry(1.1,1.1), blM);
-    blade.position.set(0,H*0.96, front+1.1); blade.rotation.y=Math.PI/2; g.add(blade);
+    const sign=new THREE.Mesh(new THREE.PlaneGeometry(W*0.72,H*0.22), signM); sign.position.set(0,H*0.88, front+0.05); g.add(sign);     // 大きなWC看板
     g.position.set(cx,baseY,cz);
     g.rotation.y=Math.atan2(dirX,dirZ);              // local +z を通路方向(dir)へ向ける
     return g;
@@ -2557,13 +2549,14 @@ const CONFIG = {
         const w=tileToWorld(c.x,c.y);
         if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
         worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));
-        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,FH*0.82,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
-        beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+FH*0.43,w.z); beacon.visible=false; worldRoot.add(beacon);   // 天井を突き抜けない高さ
+        // 青い円柱＝恒久的なトイレ目印。壁際（埋め込み）に常時表示
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,FH*0.82,10), new THREE.MeshBasicMaterial({color:0x2a9bff,transparent:true,opacity:0.6}));
+        beacon.material.toneMapped=false; beacon.position.set(w.x-c.dx*T*0.38, (f-1)*FH+FH*0.43, w.z-c.dy*T*0.38); worldRoot.add(beacon);
         toilets.push({x:w.x,z:w.z,level:f,beacon}); made++;
       }
     }
   }
-  function setToiletBeacons(on){ for(const t of toilets) if(t.beacon) t.beacon.visible=on; }
+  function setToiletBeacons(on){ /* 青い円柱は常時表示（恒久オブジェクト）。尿意でも消さない */ }
   function resetToiletUrge(){ toiletState="none"; toiletT=C.TOILET_INTERVAL_MIN+Math.random()*(C.TOILET_INTERVAL_MAX-C.TOILET_INTERVAL_MIN); setToiletBeacons(false); }
   function updateToiletUrge(dt){
     if(!drunk) return;
