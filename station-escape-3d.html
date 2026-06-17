@@ -63,9 +63,14 @@
   #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
     background:#fff; border-radius:50%; opacity:.6; pointer-events:none; }
 
-  /* 敵に追われているときの赤い警告（画面周囲） */
+  /* 敵に追われているときの赤い警告（画面周囲）＋四隅で方向を示す */
   #alert { position:fixed; inset:0; z-index:9; pointer-events:none; opacity:0;
     box-shadow: inset 0 0 150px 55px rgba(225,0,0,0.85); }
+  #cwTR,#cwTL,#cwBR,#cwBL{ position:fixed; width:62%; height:62%; z-index:9; pointer-events:none; opacity:0; }
+  #cwTR{ top:0; right:0;    background:radial-gradient(ellipse at top right,    rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
+  #cwTL{ top:0; left:0;     background:radial-gradient(ellipse at top left,     rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
+  #cwBR{ bottom:0; right:0; background:radial-gradient(ellipse at bottom right, rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
+  #cwBL{ bottom:0; left:0;  background:radial-gradient(ellipse at bottom left,  rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
   /* トイレが漏れる直前の黄色い警告（画面周囲）＋カウント */
   #toiletwarn { position:fixed; inset:0; z-index:9; pointer-events:none; opacity:0;
     box-shadow: inset 0 0 130px 50px rgba(240,205,30,0.85); }
@@ -221,6 +226,7 @@ const CONFIG = {
 <canvas id="map" class="hidden"></canvas>
 <div id="mapLabel" class="hidden">MAP</div>
 <div id="alert"></div>
+<div id="cwTR"></div><div id="cwTL"></div><div id="cwBR"></div><div id="cwBL"></div>
 <div id="toiletwarn"></div>
 <div id="toiletcount"></div>
 <div id="cross" class="hidden"></div>
@@ -309,11 +315,12 @@ const CONFIG = {
   const dashEl = document.getElementById("dash"), dashFillEl = document.getElementById("dashFill"), dashTxtEl = document.getElementById("dashTxt");
   const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
+  const cwEls = { TR:document.getElementById("cwTR"), TL:document.getElementById("cwTL"), BR:document.getElementById("cwBR"), BL:document.getElementById("cwBL") };
   const toiletWarnEl = document.getElementById("toiletwarn"), toiletCountEl = document.getElementById("toiletcount");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.109";
+  const APP_VERSION = "Ver.110";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2816,16 +2823,22 @@ const CONFIG = {
         else toiletCountEl.style.display="none";
       } else { toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none"; }
     }
-    // 敵に見つかって追われている間は画面周囲を赤くチカチカ（近いほど強く、遠ざかると弱まる）
-    let nearChase=Infinity;
+    // 敵に見つかって追われている間は画面周囲を赤く。さらに四隅で敵のいる方向を特に強く示す
+    let nearChase=Infinity, nearC=null;
     if(running) for(const c of chasers){ if(!c.showAlert || c.level!==player.level) continue;
-      const d=Math.hypot(c.x-player.x,c.z-player.z); if(d<nearChase) nearChase=d; }
-    if(nearChase<Infinity){
-      // 近い=強い/遠い=弱い。視認範囲は強化(地上倍率・出口付近・警戒)で最大2倍超まで伸びるため広めの基準で。
-      // 追跡中(showAlert)は必ず一定の赤みを残し、見えているのに無警告にならないようにする
+      const d=Math.hypot(c.x-player.x,c.z-player.z); if(d<nearChase){ nearChase=d; nearC=c; } }
+    if(nearC){
       const prox=Math.max(0, Math.min(1, 1 - nearChase/(C.CHASER_SIGHT*2.2)));   // 近い=1 / 遠い=0
-      alertEl.style.opacity = (0.2 + 0.65*prox) * (0.62 + 0.38*Math.abs(Math.sin(flick*11)));
-    } else alertEl.style.opacity = 0;
+      const pulse=0.62 + 0.38*Math.abs(Math.sin(flick*11));
+      alertEl.style.opacity = (0.14 + 0.4*prox) * pulse;                          // 全体は弱め
+      // 敵の方向（カメラ基準）：正面=上 / 背後=下 / 右=右 / 左=左 → 近い隅を強い赤に
+      const dx=nearC.x-player.x, dz=nearC.z-player.z;
+      const fc=dx*fwd.x+dz*fwd.z, rc=dx*right.x+dz*right.z, bearing=Math.atan2(rc,fc);
+      const strong=(0.55+0.6*prox)*pulse;
+      const corners={ TR:Math.PI/4, BR:3*Math.PI/4, BL:-3*Math.PI/4, TL:-Math.PI/4 };
+      for(const k in corners){ let da=bearing-corners[k]; while(da>Math.PI)da-=6.283185; while(da<-Math.PI)da+=6.283185;
+        const w=Math.max(0,Math.cos(da)); cwEls[k].style.opacity = strong*w*w; }   // 近い方向ほど強い
+    } else { alertEl.style.opacity=0; for(const k in cwEls) cwEls[k].style.opacity=0; }
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
   }
