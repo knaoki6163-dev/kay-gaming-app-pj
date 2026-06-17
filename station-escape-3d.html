@@ -320,7 +320,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.110";
+  const APP_VERSION = "Ver.111";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1960,6 +1960,7 @@ const CONFIG = {
     running=true; if(!isTouch) requestLock();
   }
   function pauseToStart(){ if(!running)return; running=false;
+    toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none";   // 一時停止中にトイレ警告を残さない
     startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
   const RANKS=["S","A","B","C","D","E","F"];
   const RANK_COLORS=["#ffd23a","#ff6a3a","#4ab0e2","#5fd36a","#b0b6bd","#7a8088","#565b62"];
@@ -2349,7 +2350,8 @@ const CONFIG = {
       const nearSt = stairAnchors.length && p.level!==pf && nearStairAnchor(p);
       const dormant = !nearSt && ((p.level!==pf) || ((p.x-player.x)**2+(p.z-player.z)**2 > ACT2));
       if(dormant && ((pedFrame+i)%STRIDE!==0)) continue;
-      const d = dormant ? dt*STRIDE : dt;
+      // 実際に前回更新からの経過フレームぶんだけ dt を進める（休眠↔活動の切替時に進め過ぎないよう）
+      const d = Math.min(STRIDE+1, pedFrame-(p.lastUpd||(pedFrame-1)))*dt; p.lastUpd=pedFrame;
       if(!p.ride && p.kind!=="T" && !(p.kind==="K"&&p.visit>0)){ p.roleT-=d; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
       if(p.kind==="T"){ throughStep(p, d); p.y=(p.level-1)*FH; }
       else if(p.kind==="K"){ kioskStep(p, d); p.y=(p.level-1)*FH; }
@@ -2537,7 +2539,7 @@ const CONFIG = {
   function setDrunkMsg(m,t){ drunkMsg=m; drunkMsgT=t; }
   function dropDrunk(){   // W連打ダッシュで手を放す（＝はぐれ）
     if(!carrying || !drunk) return;
-    carrying=false; drunk.konbiniDone=false; drunk.stopT=0; if(drunk.beacon) drunk.beacon.visible=true;
+    carrying=false; drunk.konbiniDone=false; drunk.stopT=0; drunk.toiletStop=0; if(drunk.beacon) drunk.beacon.visible=true;  // トイレ中に手放したら用足しは中断（尿意は継続）
     setDrunkMsg("msgDrop",3); lostT=2.8; statDrop++; sfxAlert();
   }
   // ---------- トイレ（尿意：予兆→猶予→失敗でGAME OVER） ----------
