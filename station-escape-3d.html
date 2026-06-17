@@ -113,14 +113,14 @@ const CONFIG = {
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_FLOORS: [1, 2, 3, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(5人)
-  MOVE_SPEED: 6.75,     // 通常速度（手ぶら歩き）※歩行はすべて従来の0.9倍に
-  WALK_SPEED: 5.4,      // 酔っ払いを連れて歩く速度
-  DASH_SPEED: 9.0,      // ダッシュ（W連打）＝据え置き（速いまま）
-  DASH_DUR: 10,         // 9.0ダッシュの持続上限(秒)。使い切ると回復待ち
-  DASH_PARTIAL_SPEED: 8.0, // 回復途中で使える弱ダッシュの速度
-  DASH_PARTIAL_AT: 10,  // ダッシュ終了から何秒後に8.0ダッシュが使えるか
-  DASH_PARTIAL_DUR: 5,  // 8.0ダッシュの持続(秒)
-  DASH_FULL_AT: 20,     // ダッシュ終了から何秒で9.0ダッシュが完全復活するか
+  MOVE_SPEED: 6.075,    // 通常速度（手ぶら歩き）※さらに0.9倍に減速
+  WALK_SPEED: 4.86,     // 酔っ払いを連れて歩く速度（さらに0.9倍に減速）
+  DASH_SPEED: 8.0,      // ダッシュ（W連打）の速度
+  DASH_DUR: 10,         // ダッシュの持続上限(秒)。使い切ると回復待ち
+  DASH_PARTIAL_SPEED: 7.0, // 回復途中で使える弱ダッシュの速度
+  DASH_PARTIAL_AT: 10,  // ダッシュ終了から何秒後に弱ダッシュが使えるか
+  DASH_PARTIAL_DUR: 5,  // 弱ダッシュの持続(秒)
+  DASH_FULL_AT: 20,     // ダッシュ終了から何秒で通常ダッシュが完全復活するか
   DRUNK_SPEED: 6.5,     // 酔っ払いがついてくる速度（連れて歩いても離れない様に歩行より少し速い）
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
@@ -138,6 +138,9 @@ const CONFIG = {
   CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
+  CHASER_FOV: 150,      // 敵の視野角(度)。顔の向いている方向±半分の範囲だけ探知（全方位ではない）
+  STAIR_PRERENDER: 16,  // プレイヤーが階段口にこの距離まで近づくと、接続先フロアの階段付近も先に3D表示
+  STAIR_PRERENDER_AREA: 13, // その階段付近として別フロアを表示する半径
   ALERT_SIGHT_MULT: 1.5,// 一度見つけた敵の探知範囲の倍率（探知能力UP）
   NEAR_EXIT_SIGHT_MULT: 1.7, // 出口付近では地上の敵の視認距離を上げる（運搬の最終局面を難しく）
   NEAR_EXIT_DIST: 22,   // 出口からこの距離内で発動
@@ -296,7 +299,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.103";
+  const APP_VERSION = "Ver.104";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -332,10 +335,10 @@ const CONFIG = {
     enChase:{ ja:'追跡中！', en:'CHASING!' }, enWander:{ ja:'徘徊', en:'Patrol' },
     crouchTag:{ ja:'　/　🫥しゃがみ中', en:'　/　🫥Crouching' },
     controls:{ ja:'WASD移動・C:しゃがむ・マウス視点', en:'WASD move・C crouch・Mouse look' },
-    dashFull:{ ja:s=>'⚡ダッシュ9.0  残'+s+'秒', en:s=>'⚡Dash 9.0  '+s+'s left' },
-    dashPartial:{ ja:s=>'⚡弱ダッシュ8.0  残'+s+'秒', en:s=>'⚡Weak dash 8.0  '+s+'s left' },
+    dashFull:{ ja:s=>'⚡ダッシュ8.0  残'+s+'秒', en:s=>'⚡Dash 8.0  '+s+'s left' },
+    dashPartial:{ ja:s=>'⚡弱ダッシュ7.0  残'+s+'秒', en:s=>'⚡Weak dash 7.0  '+s+'s left' },
     dashCool:{ ja:(lab,s)=>'ダッシュ回復中… '+lab+s+'秒', en:(lab,s)=>'Dash recovering… '+lab+s+'s' },
-    dashTo8:{ ja:'8.0まで', en:'8.0 in ' }, dashTo9:{ ja:'9.0まで', en:'9.0 in ' },
+    dashTo8:{ ja:'7.0まで', en:'7.0 in ' }, dashTo9:{ ja:'8.0まで', en:'8.0 in ' },
     // 酔っ払いの一時メッセージ
     msgDrop:{ ja:'ダッシュで手が離れた！もう一度連れに行け', en:'Dashing made you drop him! Go get him again' },
     msgToiletWarn:{ ja:'酔っ払いがソワソワし始めた…トイレが近いぞ！', en:'The drunk is getting restless… he needs a toilet soon!' },
@@ -1483,7 +1486,7 @@ const CONFIG = {
       const g=makeHuman(0xe11616,0x7a0000,0xff3a3a);   // しっかりした赤の全身
       g.traverse(o=>{ if(o.isMesh) o.material.emissive=new THREE.Color(0x4a0000); }); // 暗所でも赤く目立つ
       g.position.set(cw.x,(lvl-1)*FH+FOOT_LIFT,cw.z); worldRoot.add(g);
-      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"巡回", dir:Math.random()*6.28,
+      chasers.push({ group:g, x:cw.x, z:cw.z, y:(lvl-1)*FH, level:lvl, state:"巡回", dir:Math.random()*6.28, faceAng:Math.random()*6.28,
         mem:0, lx:cw.x, lz:cw.z, showAlert:false, alerted:false,
         mode:"patrol", floorTimer:C.CHASER_FLOOR_TIME*(0.5+Math.random()), transit:null,
         patField:null, patReached:true, _px:cw.x, _pz:cw.z, _stuck:0 });
@@ -1714,6 +1717,27 @@ const CONFIG = {
   const _billDummy=new THREE.Object3D();
   let pedFrame=0;                                   // 移動計算の間引き用フレームカウンタ
   const _frustum=new THREE.Frustum(), _projScreen=new THREE.Matrix4(), _sph=new THREE.Sphere();  // 視野カリング用
+  // プレイヤーが階段口に近づくと、接続先フロア側の階段付近も「先に」3D表示するためのアンカー
+  let stairAnchors=[];
+  function landingWorld(t){ const p=Array.isArray(t[0])?t[0]:t; return tileToWorld(p[0],p[1]); }
+  function computeStairAnchors(){
+    stairAnchors.length=0; const pf=player.level, TRIG2=C.STAIR_PRERENDER*C.STAIR_PRERENDER;
+    for(const s of stairs){
+      let mine=null, otherTile=null, otherLevel=0;
+      if(s.lvl===pf){ mine=s.entry; otherTile=s.exit; otherLevel=pf+1; }          // 下のフロアに居る→上り先
+      else if(s.lvl+1===pf){ mine=s.exit; otherTile=s.entry; otherLevel=s.lvl; }  // 上のフロアに居る→下り先
+      else continue;
+      const mw=landingWorld(mine);
+      if((mw.x-player.x)**2+(mw.z-player.z)**2 <= TRIG2){
+        const ow=landingWorld(otherTile); stairAnchors.push({level:otherLevel, x:ow.x, z:ow.z});
+      }
+    }
+  }
+  function nearStairAnchor(p){
+    const A2=C.STAIR_PRERENDER_AREA*C.STAIR_PRERENDER_AREA;
+    for(const a of stairAnchors){ if(a.level!==p.level) continue; if((p.x-a.x)**2+(p.z-a.z)**2<=A2) return true; }
+    return false;
+  }
   function buildPedInstances(){
     const n=pedestrians.length;
     pedTorsoInsts={}; pedBillInsts={};
@@ -2108,7 +2132,11 @@ const CONFIG = {
       if(chaser.level===NF && !metEnemyUnderground) sight*=2;   // 地下で敵に未遭遇なら地上は遭遇率を倍に
       if(chaser.level===NF && nearExit) sight*=C.NEAR_EXIT_SIGHT_MULT; // 出口付近は遭遇率UP
       if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
-      let see=gameTime>=C.START_GRACE && same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level); // 開始直後は探知なし
+      // 探知は「顔の向いている方向(faceAng)」±半画角の範囲のみ＝全方位ではない
+      let dAng=Math.atan2(player.x-chaser.x, player.z-chaser.z)-(chaser.faceAng||0);
+      while(dAng>Math.PI)dAng-=6.283185307; while(dAng<-Math.PI)dAng+=6.283185307;
+      const inFov=Math.abs(dAng) <= C.CHASER_FOV*Math.PI/360;
+      let see=gameTime>=C.START_GRACE && same && d<sight && inFov && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level); // 開始直後は探知なし
       if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
       if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY);
         if(player.level<NF) metEnemyUnderground=true; }                  // 地下で遭遇を記録
@@ -2145,8 +2173,9 @@ const CONFIG = {
         chaser.floorTimer=C.CHASER_FLOOR_TIME*(0.6+Math.random()*0.8);
       }
       chaser.group.position.set(chaser.x,chaser.y+FOOT_LIFT,chaser.z);
-      if(chasing){ chaser.group.rotation.set(0,Math.atan2(player.x-chaser.x, player.z-chaser.z),0); } // 追跡中は顔(前)をプレイヤーへ向ける
-      else if(Math.hypot(mvx,mvz)>0.0001){ chaser.group.rotation.set(0,Math.atan2(mvx,mvz),0); }   // 巡回中は進行方向を向く
+      if(chasing) chaser.faceAng=Math.atan2(player.x-chaser.x, player.z-chaser.z);   // 追跡中は顔(前)をプレイヤーへ
+      else if(Math.hypot(mvx,mvz)>0.0001) chaser.faceAng=Math.atan2(mvx,mvz);        // 巡回中は進行方向へ
+      chaser.group.rotation.set(0, chaser.faceAng||0, 0);                            // この向き＝探知の向き
     }
   }
 
@@ -2271,6 +2300,7 @@ const CONFIG = {
   }
   function updatePedestrians(dt){
     pedFrame++;
+    computeStairAnchors();   // 近くの階段の「接続先フロアの階段付近」を毎フレーム算出（描画・計算で先読み表示）
     balAccum+=dt;
     if(balAccum>=0.5){ balAccum=0; balancePedestrians(); }
     densAccum+=dt; if(densAccum>=0.4){ densAccum=0; computeDensity(); }   // 人口密度を更新（空いている方へ寄る用）
@@ -2283,7 +2313,9 @@ const CONFIG = {
     for(const p of pedestrians){
       i++;
       // 描画対象外（別フロア or 遠距離）の通行人は移動計算を間引く（毎フレームでなくSTRIDE回に1回、まとめてdtを進める）
-      const dormant = (p.level!==pf) || ((p.x-player.x)**2+(p.z-player.z)**2 > ACT2);
+      // ただし近くの階段の接続先フロアの階段付近にいる通行人は、3D表示するので毎フレーム更新する
+      const nearSt = stairAnchors.length && p.level!==pf && nearStairAnchor(p);
+      const dormant = !nearSt && ((p.level!==pf) || ((p.x-player.x)**2+(p.z-player.z)**2 > ACT2));
       if(dormant && ((pedFrame+i)%STRIDE!==0)) continue;
       const d = dormant ? dt*STRIDE : dt;
       if(!p.ride && p.kind!=="T" && !(p.kind==="K"&&p.visit>0)){ p.roleT-=d; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
@@ -2332,14 +2364,19 @@ const CONFIG = {
     for(const ci in pedTorsoInsts) tc[ci]=0;
     for(const ci in pedBillInsts) bc[ci]=0;
     for(const p of pedestrians){
-      if(p.level!==pf) continue;                       // 別フロア → 描画しない
-      const dx=p.x-player.x, dz=p.z-player.z, d2=dx*dx+dz*dz;
-      if(d2>FAR2) continue;                             // 遠すぎ → 描画しない
+      let asBill;
+      if(p.level===pf){                                 // 同フロア
+        const dx=p.x-player.x, dz=p.z-player.z, d2=dx*dx+dz*dz;
+        if(d2>FAR2) continue;                           // 遠すぎ → 描画しない
+        asBill = d2>NEAR2;                              // 近=3D / 遠=ビルボード
+      } else {                                          // 別フロア
+        if(!(stairAnchors.length && nearStairAnchor(p))) continue;  // 階段付近以外は描画しない
+        asBill = false;                                 // 階段の先読みは3Dで表示
+      }
       _sph.center.set(p.x, p.y+1.0, p.z); _sph.radius=1.2;
       if(!_frustum.intersectsSphere(_sph)) continue;    // カメラ視野外 → 描画しない
-      if(d2<=NEAR2){                                     // 近距離 → 3Dモデル
-        placePed3D(p, n3d++, tc[p.ci]++);
-      } else {                                          // 遠距離 → カメラを向く2Dビルボード
+      if(!asBill){ placePed3D(p, n3d++, tc[p.ci]++); }  // 3Dモデル
+      else {                                            // カメラを向く2Dビルボード
         const bi=bc[p.ci]++, base=p.y+FOOT_LIFT;
         _billDummy.position.set(p.x, base+BILL_H*0.5, p.z);
         _billDummy.rotation.set(0, Math.atan2(cpx-p.x, cpz-p.z), 0);   // Y軸のみ＝直立のまま正面を向く
