@@ -198,8 +198,8 @@ const CONFIG = {
 <div id="mission" class="hidden">
   <div id="missionTitle">ミッション</div>
   <ul>
-    <li id="m1"><span class="chk">❌</span><span class="mtxt"></span></li>
-    <li id="m2"><span class="chk">❌</span><span class="mtxt"></span></li>
+    <li id="m1"><span class="chk">⬜</span><span class="mtxt"></span></li>
+    <li id="m2"><span class="chk">⬜</span><span class="mtxt"></span></li>
   </ul>
 </div>
 <div id="mapToggle" class="hidden">🗺 たたむ（M）</div>
@@ -296,7 +296,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.102";
+  const APP_VERSION = "Ver.103";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -345,7 +345,7 @@ const CONFIG = {
     msgTrain:{ ja:'🚃 電車が到着！ホームが人混みで動きにくい', en:'🚃 Train arriving! The crowded platform slows you down' },
     msgPicked:{ ja:'酔っ払いを連れた！地上の正しい出口へ送り届けろ', en:'Got the drunk! Deliver him to the correct ground exit' },
     msgKonbini:{ ja:'酔っ払いがコンビニで酒を欲しがり動かない…そばで待て！', en:'The drunk stops at the konbini craving booze… wait beside him!' },
-    msgBring:{ ja:'酔っ払いを連れて来い！', en:'Bring the drunk here!' },
+    msgBring:{ ja:'酔っぱらいを救い出せ！', en:'Rescue the drunk!' },
     // リザルト
     resCleared:{ ja:(tm,d,dr)=>'送り届け成功！　タイム '+tm+'　/　見つかった '+d+'回・手放し '+dr+'回', en:(tm,d,dr)=>'Delivered! Time '+tm+'　/　Spotted '+d+'×・Dropped '+dr+'×' },
     resRank:{ ja:'あなたのランク：', en:'Your rank: ' },
@@ -365,7 +365,7 @@ const CONFIG = {
   langBtn.addEventListener("click", e=>{ e.stopPropagation(); lang = (lang==="ja")?"en":"ja"; applyLang(); });
   function setMission(li, done, text){
     li.classList.toggle("done", done);
-    li.querySelector(".chk").textContent = done ? "✅" : "❌";
+    li.querySelector(".chk").textContent = done ? "✅" : "⬜";
     li.querySelector(".mtxt").textContent = text;
   }
   applyLang();   // 初期表示（言語ラベル等を確定）
