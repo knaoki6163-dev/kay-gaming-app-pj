@@ -21,8 +21,11 @@
     color:#fff; background:rgba(20,30,45,.85); padding:4px 10px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
   #carry { position:fixed; top:40px; left:10px; z-index:8; font-size:15px; font-weight:bold;
-    color:#fff2c0; background:rgba(150,70,10,.9); padding:4px 12px; border-radius:6px;
+    color:#fff; background:rgba(22,140,60,.95); padding:4px 12px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  #lost { position:fixed; top:40px; left:10px; z-index:9; font-size:15px; font-weight:bold;
+    color:#fff; background:rgba(200,30,30,.95); padding:4px 12px; border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.5); }
   #timer { position:fixed; top:8px; right:12px; z-index:8; font-size:17px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 12px; border-radius:6px;
     box-shadow:0 2px 6px rgba(0,0,0,.4); }
@@ -87,9 +90,10 @@ const CONFIG = {
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
-  MOVE_SPEED: 9.0,      // 手ぶら時の移動速度（従来の歩行6.0の1.5倍）
-  WALK_SPEED: 6.0,      // 酔っ払いを連れている時のプレイヤー速度（＝従来の歩行スピード）
-  DRUNK_SPEED: 4.0,     // 酔っ払いがついてくる速度
+  MOVE_SPEED: 7.5,      // 通常速度（手ぶら歩き＝従来歩行6.0の1.25倍）
+  WALK_SPEED: 6.0,      // 酔っ払いを連れて歩く速度（従来の歩行スピード）
+  DASH_SPEED: 9.0,      // ダッシュ（W連打）＝従来歩行6.0の1.5倍
+  DRUNK_SPEED: 6.5,     // 酔っ払いがついてくる速度（連れて歩いても離れない様に歩行より少し速い）
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
   KONBINI_DIST: 6.0,    // コンビニにこの距離まで近づくと酔っ払いが立ち止まる
@@ -150,7 +154,8 @@ const CONFIG = {
 
 <div id="app"></div>
 <div id="floor" class="hidden"></div>
-<div id="carry" class="hidden">🍶 酔っ払いを連れている（走れない）</div>
+<div id="carry" class="hidden">🟢 酔っ払いを連れている（W連打で手放す）</div>
+<div id="lost" class="hidden">🔴 酔っ払いとはぐれた！</div>
 <div id="verHud"></div>
 <div id="muteBtn" title="音のオン/オフ">🔊</div>
 <div id="mapToggle" class="hidden">🗺 たたむ（M）</div>
@@ -239,12 +244,13 @@ const CONFIG = {
   mapToggle.addEventListener("click", e=>{ e.stopPropagation(); setMapCollapsed(!mapCollapsed); });
   const floorEl = document.getElementById("floor");
   const carryEl = document.getElementById("carry");
+  const lostEl = document.getElementById("lost");
   const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.90";
+  const APP_VERSION = "Ver.91";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1593,8 +1599,9 @@ const CONFIG = {
 
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
-  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false;
+  const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false, wMash=0, lostT=0;
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
+    if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
     if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
     if(["arrowup","arrowdown","arrowleft","arrowright"].includes(k))e.preventDefault();});
   addEventListener("keyup",e=>{keys[e.key.toLowerCase()]=false;});
@@ -1617,7 +1624,7 @@ const CONFIG = {
     touch.addEventListener("touchend",e=>{for(const t of e.changedTouches){ if(t.identifier===lookId){lookId=null;lastLook=null;}}},{passive:true});
     const map={up:"w",down:"s",left:"a",right:"d"};
     document.querySelectorAll("#pad div").forEach(el=>{ const key=map[el.className];
-      el.addEventListener("touchstart",e=>{e.preventDefault();keys[key]=true;},{passive:false});
+      el.addEventListener("touchstart",e=>{e.preventDefault();keys[key]=true; if(key==="w") wMash=Math.min(wMash+1,5);},{passive:false}); // ▲連打でダッシュ
       el.addEventListener("touchend",e=>{e.preventDefault();keys[key]=false;},{passive:false});
       el.addEventListener("touchcancel",e=>{e.preventDefault();keys[key]=false;},{passive:false});
     });
@@ -1671,7 +1678,7 @@ const CONFIG = {
     } else {
       resultInfo.innerHTML = "タイム "+fmtTime(gameTime);
     }
-    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden");
+    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden");
     if(cleared) sfxClear(); else sfxOver(); }
 
   function beginOrResume(asUser){
@@ -1704,13 +1711,20 @@ const CONFIG = {
   function updatePlayer(dt){
     camera.rotation.set(player.pitch,player.yaw,0);
     camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize(); right.crossVectors(fwd,up).normalize();
+    wMash=Math.max(0, wMash-dt*3.0); if(lostT>0) lostT-=dt;   // W連打メーターの減衰（毎秒3回より速く連打で発動）
+    const mashing = wMash>=1.8;                              // 連打中＝ダッシュ意思
+    crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
+    let spd;
+    if(crouching) spd=C.CROUCH_SPEED;
+    else if(carrying){
+      if(mashing){ dropDrunk(); spd=C.MOVE_SPEED; }          // 連れて連打→手が離れて通常速度に
+      else spd=C.WALK_SPEED;                                 // 連れて歩き＝はぐれない
+    } else spd = mashing ? C.DASH_SPEED : C.MOVE_SPEED;       // 手ぶら：歩き=通常 / 連打=ダッシュ
     let mf=0,ms=0;
-    if(keys["w"]||keys["arrowup"])mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;
+    if(keys["w"]||keys["arrowup"]||mashing)mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;  // 連打中は前進継続
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
-    crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    const spd = carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED); // 連れている間=従来の歩行速度 / 手ぶら=その1.5倍
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
@@ -2083,7 +2097,7 @@ const CONFIG = {
     return tiles[(Math.random()*tiles.length)|0];
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
-    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[];
+    drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0;
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
       for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
@@ -2112,6 +2126,11 @@ const CONFIG = {
     buildToilets(); resetToiletUrge();   // トイレ配置＆尿意タイマー初期化
   }
   function setDrunkMsg(m,t){ drunkMsg=m; drunkMsgT=t; }
+  function dropDrunk(){   // W連打ダッシュで手を放す（＝はぐれ）
+    if(!carrying || !drunk) return;
+    carrying=false; drunk.konbiniDone=false; drunk.stopT=0; if(drunk.beacon) drunk.beacon.visible=true;
+    setDrunkMsg("ダッシュで手が離れた！もう一度連れに行け",3); lostT=2.8; sfxAlert();
+  }
   // ---------- トイレ（尿意：予兆→猶予→失敗でGAME OVER） ----------
   function toiletSignTex(){
     const cv=document.createElement("canvas"); cv.width=128; cv.height=128; const g=cv.getContext("2d");
@@ -2214,10 +2233,7 @@ const CONFIG = {
           if(drunk.level===tgt.level && Math.hypot(drunk.x-tgt.x,drunk.z-tgt.z)<1.3) playerTrail.shift();
           else moveToward(drunk, tgt.x, tgt.z, C.DRUNK_SPEED, dt, DRUNK_R); }
       }
-      if(Math.hypot(player.x-drunk.x,player.z-drunk.z) > C.DRUNK_SEPARATE){    // はぐれ
-        carrying=false; drunk.konbiniDone=false; drunk.stopT=0; if(drunk.beacon) drunk.beacon.visible=true;
-        setDrunkMsg("酔っ払いとはぐれた！もう一度探せ",3.5); sfxAlert();
-      }
+      // 歩いている限りは絶対にはぐれない（手放すのはW連打ダッシュの dropDrunk() だけ）
     }
     const si=stairInfo(drunk.x,drunk.z,drunk.level);
     if(si){ drunk.y=si.y; drunk.level=si.t>=0.5?si.lvl+1:si.lvl; } else drunk.y=(drunk.level-1)*FH;
@@ -2319,7 +2335,8 @@ const CONFIG = {
       else goalEl.textContent = carrying
         ? ("▶ "+correctExitNo+"番出口へ酔っ払いを連れ戻せ")
         : ("▶ 地下2階【"+SHINJUKU_LINES[targetLane].name+"】ホームの酔っ払いを探せ（黄色い光の柱）");
-      carryEl.classList.toggle("hidden", !carrying);   // 連れている間の明示表示
+      carryEl.classList.toggle("hidden", !carrying);            // 連れている＝緑
+      lostEl.classList.toggle("hidden", carrying || lostT<=0);  // はぐれた＝赤（一定時間）
       floorEl.textContent = "現在地: "+floorName(player.level);
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       const graceLeft = Math.ceil(C.START_GRACE-gameTime);
