@@ -90,9 +90,9 @@ const CONFIG = {
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
-  MOVE_SPEED: 7.5,      // 通常速度（手ぶら歩き＝従来歩行6.0の1.25倍）
-  WALK_SPEED: 6.0,      // 酔っ払いを連れて歩く速度（従来の歩行スピード）
-  DASH_SPEED: 9.0,      // ダッシュ（W連打）＝従来歩行6.0の1.5倍
+  MOVE_SPEED: 6.75,     // 通常速度（手ぶら歩き）※歩行はすべて従来の0.9倍に
+  WALK_SPEED: 5.4,      // 酔っ払いを連れて歩く速度
+  DASH_SPEED: 9.0,      // ダッシュ（W連打）＝据え置き（速いまま）
   DRUNK_SPEED: 6.5,     // 酔っ払いがついてくる速度（連れて歩いても離れない様に歩行より少し速い）
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
@@ -106,11 +106,12 @@ const CONFIG = {
   TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
   CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
   CROWD_SURGE: 1100,    // 到着時にホームへ集まる通行人の数（電車から大量に＝従来の5倍）
+  THROUGH_PED_COUNT: 60,// 地下1階の前後の別ビルを通り抜ける人流の数（半分が前→後ろ、半分が後ろ→前）
   CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
   ALERT_SIGHT_MULT: 1.5,// 一度見つけた敵の探知範囲の倍率（探知能力UP）
-  CROUCH_SPEED: 2.6,    // しゃがみ移動速度
+  CROUCH_SPEED: 2.34,   // しゃがみ移動速度（従来の0.9倍）
   CROUCH_EYE: 0.85,     // しゃがみ時の視点の高さ
   CROUCH_SIGHT_MULT: 0.35, // しゃがむと敵の視認距離をこの倍率に（見つかりにくい）
   CROUCH_HIDE_PED: 2.8, // しゃがみ中、この距離内に通行人がいると完全に紛れて見つからない
@@ -250,7 +251,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.92";
+  const APP_VERSION = "Ver.93";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -719,6 +720,7 @@ const CONFIG = {
   let exits=[], correctExitNo=1, chasers=[], pedestrians=[], chaserTargets={};
   let deptDoors=[], trainDoors=[];      // 各フロアの「人の出入り口」: B1=デパート, B2=電車ドア
   let sourcePts={}, pedPool={}, pedTargets={}, flowFields={}, balAccum=0; // フロア間移動と人数調節用
+  let throughFront=[], throughBack=[], throughFields={front:null,back:null}; // 地下1階：前後の別ビル出入口と通り抜けの人流
   let upField={};   // 各地下フロアから上の階段へ向かう経路場（案内看板の正しい向きの判定用）
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
@@ -981,6 +983,75 @@ const CONFIG = {
       const cgeo=(c.dx!==0)? new THREE.BoxGeometry(ext+0.2,0.18,WD*0.98) : new THREE.BoxGeometry(WD*0.98,0.18,ext+0.2);
       const canopy=new THREE.Mesh(cgeo, frameMat); canopy.position.set(ccx, base+2.95, ccz); worldRoot.add(canopy);
     }
+  }
+
+  // ---------- 地下1階：フロア前後の「別ビルへの超巨大な出入口」＋通り抜けの人流 ----------
+  function buildingSignTex(side){
+    const cv=document.createElement("canvas"); cv.width=1024; cv.height=128; const g=cv.getContext("2d");
+    g.fillStyle="#10243a"; g.fillRect(0,0,1024,128);
+    g.strokeStyle="#7fb0d8"; g.lineWidth=8; g.strokeRect(8,8,1008,112);
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle";
+    g.font="bold 64px sans-serif"; g.fillText(side==="front"?"西口ビル　連絡通路":"東口ビル　連絡通路", 512, 46);
+    g.font="bold 30px sans-serif"; g.fillText(side==="front"?"WEST BUILDING  ▶":"◀  EAST BUILDING", 512, 96);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  // side="front"(前=低座標側) / "back"(後ろ=高座標側) の各列で、その壁に最も近い床タイル＝出入口の口
+  function collectMouthTiles(f, side){
+    const out=[];
+    for(let x=1;x<C.COLS-1;x++){
+      if(side==="front"){ for(let y=1;y<C.ROWS/2;y++){ if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){ out.push({x,y}); break; } } }
+      else { for(let y=C.ROWS-2;y>=C.ROWS/2;y--){ if(grids[f][y][x]===0 && !stairTileSet.has(x+","+y)){ out.push({x,y}); break; } } }
+    }
+    return out;
+  }
+  function buildBuildingPortal(f, side){
+    const base=(f-1)*FH, H=FH*0.94, width=(C.COLS-3)*T, cx=C.COLS*T/2;
+    const z = side==="front" ? T*0.55 : C.ROWS*T - T*0.55;
+    const face = side==="front" ? 1 : -1;                 // フロア内側へ向く向き（前=+z / 後ろ=-z）
+    const g=new THREE.Group();
+    const frame=new THREE.Mesh(new THREE.BoxGeometry(width+T, H+0.9, 0.5), new THREE.MeshLambertMaterial({color:0x23282e}));
+    frame.position.set(cx, base+H/2, z - face*0.3); g.add(frame);
+    const glow=new THREE.Mesh(new THREE.PlaneGeometry(width, H*0.96), new THREE.MeshBasicMaterial({color:0xf2e6c4}));
+    glow.material.toneMapped=false; glow.position.set(cx, base+H/2, z - face*0.14); if(face<0) glow.rotation.y=Math.PI; g.add(glow);
+    const gtex=deptGlassTex(); gtex.wrapS=THREE.RepeatWrapping; gtex.repeat.set(Math.round(width/T),1);
+    const glass=new THREE.Mesh(new THREE.PlaneGeometry(width, H*0.82), new THREE.MeshBasicMaterial({map:gtex,transparent:true,opacity:0.5,side:THREE.DoubleSide}));
+    glass.material.toneMapped=false; glass.position.set(cx, base+H*0.41, z); if(face<0) glass.rotation.y=Math.PI; g.add(glass);
+    const sg=new THREE.Mesh(new THREE.PlaneGeometry(width*0.92, FH*0.36), new THREE.MeshBasicMaterial({map:buildingSignTex(side),side:THREE.DoubleSide}));
+    sg.material.toneMapped=false; sg.position.set(cx, base+H*0.88, z+face*0.06); if(face<0) sg.rotation.y=Math.PI; g.add(sg);
+    const can=new THREE.Mesh(new THREE.BoxGeometry(width+T, 0.32, T*0.9), new THREE.MeshLambertMaterial({color:0x2c3238}));
+    can.position.set(cx, base+H*0.74, z+face*(T*0.45)); g.add(can);
+    worldRoot.add(g);
+  }
+  function buildB1Portals(){
+    throughFront=collectMouthTiles(2,"front"); throughBack=collectMouthTiles(2,"back");
+    buildBuildingPortal(2,"front"); buildBuildingPortal(2,"back");
+    throughFields.front = throughFront.length ? bfsField(2, throughFront.map(t=>[t.x,t.y])) : null;
+    throughFields.back  = throughBack.length  ? bfsField(2, throughBack.map(t=>[t.x,t.y]))  : null;
+    if(!throughFront.length || !throughBack.length) return;
+    let pi2=pedestrians.length;
+    for(let k=0;k<C.THROUGH_PED_COUNT;k++){
+      const f2b=(k%2===0), src=f2b?throughFront:throughBack;
+      const m=src[(Math.random()*src.length)|0], w=tileToWorld(m.x,m.y);
+      pedestrians.push({ x:w.x+(Math.random()-0.5)*T*0.4, z:w.z+(Math.random()-0.5)*T*0.4, level:2, y:FH,
+        dir:Math.random()*6.28, timer:Math.random()*3, rush:0, ci:(pi2++)%clothColors.length, ry:0,
+        kind:"T", thr:f2b?"F2B":"B2F", goal:0, ride:null, trip:-1, lastStair:-1, ktarget:-1, visit:0, roleT:1e9 });
+    }
+  }
+  // 通り抜け：目標ビルの出入口へ向かい、着いたら反対側のビルから再び現れる（常に前⇄後ろの人流）
+  function throughStep(p, dt){
+    if(p.rush>0) p.rush-=dt;
+    const f2b=(p.thr==="F2B"), field=f2b?throughFields.back:throughFields.front;
+    const srcMouth=f2b?throughFront:throughBack;
+    if(!field){ wanderStep(p,dt); return; }
+    const tx=Math.floor(p.x/T), ty=Math.floor(p.z/T);
+    if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS){ wanderStep(p,dt); return; }
+    const d=field.dist[ty][tx];
+    if(d>=0 && d<=1){   // 目標ビルに到達→反対側のビルから出直す
+      const mm=srcMouth[(Math.random()*srcMouth.length)|0]||{x:tx,y:ty}, w=tileToWorld(mm.x,mm.y);
+      p.x=w.x+(Math.random()-0.5)*T*0.3; p.z=w.z+(Math.random()-0.5)*T*0.3; return;
+    }
+    if(field.step[ty][tx]>=0){ const dd=DIRS4[field.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]); pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false); }
+    else wanderStep(p, dt);
   }
 
   // 地下2階の描画：中央の柱/売店/看板/ゴミ箱（小さい当たり判定）、線路の電車、境界壁
@@ -1290,6 +1361,7 @@ const CONFIG = {
         pedestrians.push(p);
       }
     }
+    buildB1Portals();   // 地下1階：前後の別ビル出入口＋通り抜けの人流（追加分の歩行者を含めてから描画）
     balAccum=0;
     buildPedInstances();   // 大量の歩行者をインスタンス描画で軽量に
   }
@@ -1686,10 +1758,12 @@ const CONFIG = {
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
     if(cleared){
       const t=gameTime, ri=computeRankIndex(t);
+      const score=Math.max(0, Math.round(600000/(t+30)) - statDetect*1500 - statDrop*2500);
       const row=RANKS.map((r,i)=> i===ri
         ? "<span style='font-size:46px;font-weight:900;color:"+RANK_COLORS[i]+";text-shadow:0 0 10px "+RANK_COLORS[i]+"'>"+r+"</span>"
         : "<span style='font-size:26px;opacity:.35'>"+r+"</span>").join(" ");
       resultInfo.innerHTML = "送り届け成功！　タイム "+fmtTime(t)+"　/　見つかった "+statDetect+"回・手放し "+statDrop+"回"
+        + "<br><span style='font-size:26px;font-weight:900;color:#ffd23a'>SCORE "+score.toLocaleString()+"</span>"
         + "<br><br><div style='letter-spacing:6px'>"+row+"</div>"
         + "<br><span style='font-size:15px;color:#9aa3ad'>あなたのランク：<b style='color:"+RANK_COLORS[ri]+"'>"+RANKS[ri]+"</b></span>";
     } else {
@@ -1977,7 +2051,7 @@ const CONFIG = {
   }
   function balancePedestrians(){
     const byF={}; for(let f=1;f<=NF;f++) byF[f]=[];
-    for(let i=0;i<pedestrians.length;i++) byF[pedestrians[i].level].push(i);
+    for(let i=0;i<pedestrians.length;i++){ if(pedestrians[i].kind==="T") continue; byF[pedestrians[i].level].push(i); } // 通り抜けの人流は階移動の調節対象外
     const give=[], take=[];
     for(let f=1;f<=NF;f++){ const d=byF[f].length-(pedTargets[f]||0); if(d>0) give.push([f,d]); else if(d<0) take.push([f,-d]); }
     if(!give.length || !take.length) return;
@@ -2003,8 +2077,9 @@ const CONFIG = {
     stairRiders=new Array(stairs.length).fill(0);
     for(const p of pedestrians){ const sid=p.ride?p.ride.sid:p.trip; if(sid>=0) stairLoad[sid]++; if(p.ride) stairRiders[p.ride.sid]++; }
     for(const p of pedestrians){
-      if(!p.ride && !(p.kind==="K"&&p.visit>0)){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
-      if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
+      if(!p.ride && p.kind!=="T" && !(p.kind==="K"&&p.visit>0)){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
+      if(p.kind==="T"){ throughStep(p, dt); p.y=(p.level-1)*FH; }
+      else if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
       else if(p.kind==="E"){ exitStep(p, dt); p.y=(p.level-1)*FH; }
       else if(p.kind==="M"){
         const sx0=p.x, sz0=p.z;
@@ -2091,19 +2166,34 @@ const CONFIG = {
     g.beginPath(); g.moveTo(90,46); g.lineTo(74,90); g.lineTo(106,90); g.closePath(); g.fill(); g.fillRect(84,90,5,28); g.fillRect(92,90,5,28);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
-  function buildToiletBlock(cx,cz,baseY){   // きれいなトイレ入口（入口の暗がり＋WC看板＋男女ピクト）
+  function buildToiletBlock(cx,cz,baseY,dirX,dirZ){   // 壁に密着するトイレ正面（入口＋WC看板＋男女ピクト＋突き出し看板）
     if(!_toiletIconTexC) _toiletIconTexC=toiletIconTex();
-    const g=new THREE.Group(), W=T*0.82, H=FH*0.62, D=T*0.82;
-    const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D), new THREE.MeshLambertMaterial({color:0xeef2f6})); body.position.y=H/2; g.add(body);
-    const doorM=new THREE.MeshBasicMaterial({color:0x12161a,side:THREE.DoubleSide}); doorM.toneMapped=false;
-    const iconM=new THREE.MeshBasicMaterial({map:_toiletIconTexC,side:THREE.DoubleSide}); iconM.toneMapped=false;
-    [1,-1].forEach(s=>{
-      const dr=new THREE.Mesh(new THREE.PlaneGeometry(W*0.46,H*0.78), doorM); dr.position.set(-W*0.16, H*0.4, s*(D/2+0.02)); if(s<0)dr.rotation.y=Math.PI; g.add(dr);
-      const ic=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.85), iconM); ic.position.set(W*0.28, H*0.62, s*(D/2+0.03)); if(s<0)ic.rotation.y=Math.PI; g.add(ic);
+    const g=new THREE.Group();
+    const W=T*0.92, H=FH*0.66, D=T*0.62;             // W=壁に沿う幅 / D=通路へ出る奥行
+    const bz=-(T/2 - D/2);                            // 背面を壁(タイル端=-T/2)に密着
+    const body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D), new THREE.MeshLambertMaterial({color:0xeef2f6}));
+    body.position.set(0,H/2,bz); g.add(body);
+    const front=bz+D/2;                              // 通路側の正面の z
+    const doorM=new THREE.MeshBasicMaterial({color:0x12161a}); doorM.toneMapped=false;
+    const iconM=new THREE.MeshBasicMaterial({map:_toiletIconTexC}); iconM.toneMapped=false;
+    // 入口（暗がり）×2 ＋ 男女ピクト
+    [-1,1].forEach(s=>{
+      const dr=new THREE.Mesh(new THREE.PlaneGeometry(W*0.32,H*0.78), doorM); dr.position.set(s*W*0.22, H*0.4, front+0.02); g.add(dr);
+      const ic=new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.7), iconM); ic.position.set(s*W*0.22, H*0.86, front+0.03); g.add(ic);
     });
+    // 正面の大看板（通路を向く）
     const signM=new THREE.MeshBasicMaterial({map:toiletSignTex()}); signM.toneMapped=false;
-    const sign=new THREE.Mesh(new THREE.BoxGeometry(W,H*0.3,D*0.6), signM); sign.position.y=H+H*0.15; g.add(sign);
-    g.position.set(cx,baseY,cz); return g;
+    const sign=new THREE.Mesh(new THREE.PlaneGeometry(W*0.92,H*0.28), signM);
+    sign.position.set(0,H+H*0.18, front+0.02); g.add(sign);
+    const signBack=new THREE.Mesh(new THREE.BoxGeometry(W*0.96,H*0.32,0.18), new THREE.MeshLambertMaterial({color:0x1d4ed8}));
+    signBack.position.set(0,H+H*0.18, front-0.07); g.add(signBack);
+    // 通路に突き出す吊り看板（左右どちらからでも見える）
+    const blM=new THREE.MeshBasicMaterial({map:toiletSignTex(),side:THREE.DoubleSide}); blM.toneMapped=false;
+    const blade=new THREE.Mesh(new THREE.PlaneGeometry(1.1,1.1), blM);
+    blade.position.set(0,H*0.96, front+1.1); blade.rotation.y=Math.PI/2; g.add(blade);
+    g.position.set(cx,baseY,cz);
+    g.rotation.y=Math.atan2(dirX,dirZ);              // local +z を通路方向(dir)へ向ける
+    return g;
   }
   function randUndergroundTile(f, avoidStart, sx, sz){
     let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(obsBlock[f]&&obsBlock[f].has(t.x+","+t.y)));
@@ -2155,15 +2245,35 @@ const CONFIG = {
     g.font="bold 38px sans-serif"; g.fillText("トイレ",64,46); g.font="bold 34px sans-serif"; g.fillText("WC",64,92);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
+  function wallAdjacentTiles(f){   // 「壁に背を向け通路を正面にできる」床タイル＋通路方向を列挙
+    const out=[]; const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(grids[f][y][x]!==0) continue;
+      if(stairTileSet.has(x+","+y)) continue;
+      if(obsBlock[f] && obsBlock[f].has(x+","+y)) continue;
+      if(f===1 && CENTER_COLS.includes(x) && OBJ_ROWS.includes(y)) continue;
+      for(const [dx,dy] of DIRS){
+        // 通路(dir)側=床、その反対(壁)側=壁 のとき密着配置できる
+        if(gFloor(f,x+dx,y+dy) && gWall(f,x-dx,y-dy)) out.push({x,y,dx,dy});
+      }
+    }
+    return out;
+  }
   function buildToilets(){
     toilets=[];
-    for(let f=1;f<=NF;f++)for(let n=0;n<16;n++){   // 各フロアに多めに（猶予内に着きやすく）
-      const tk=randUndergroundTile(f,false), w=tileToWorld(tk.x,tk.y);
-      if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
-      worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z));
-      const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
-      beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
-      toilets.push({x:w.x,z:w.z,level:f,beacon});
+    for(let f=1;f<=NF;f++){
+      const cand=wallAdjacentTiles(f);
+      for(let i=cand.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [cand[i],cand[j]]=[cand[j],cand[i]]; }
+      let made=0;
+      for(const c of cand){
+        if(made>=16) break;
+        const w=tileToWorld(c.x,c.y);
+        if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
+        worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
+        beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
+        toilets.push({x:w.x,z:w.z,level:f,beacon}); made++;
+      }
     }
   }
   function setToiletBeacons(on){ for(const t of toilets) if(t.beacon) t.beacon.visible=on; }
