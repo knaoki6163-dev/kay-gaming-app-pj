@@ -264,7 +264,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.95";
+  const APP_VERSION = "Ver.96";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -738,6 +738,7 @@ const CONFIG = {
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
   let statDetect=0, statDrop=0;   // ランク評価用：見つかった回数 / 酔っ払いを手放した回数
+  let metEnemyUnderground=false;  // 地下(B2/B1)で一度でも敵に遭遇したか。未遭遇なら地上の遭遇率を倍に
   // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
   const SHINJUKU_LINES=[{name:"山手線",en:"Yamanote Line",col:0x9acd32},{name:"中央線",en:"Chuo Line",col:0xf15a22},
     {name:"埼京線",en:"Saikyo Line",col:0x00a650},{name:"湘南新宿ライン",en:"Shonan-Shinjuku Line",col:0xe4002b},
@@ -1753,8 +1754,8 @@ const CONFIG = {
   }
   function pauseToStart(){ if(!running)return; running=false;
     startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
-  const RANKS=["S","A","B","C","D","E"];
-  const RANK_COLORS=["#ffd23a","#ff6a3a","#4ab0e2","#5fd36a","#b0b6bd","#7a8088"];
+  const RANKS=["S","A","B","C","D","E","F"];
+  const RANK_COLORS=["#ffd23a","#ff6a3a","#4ab0e2","#5fd36a","#b0b6bd","#7a8088","#565b62"];
   // タイムからの基準ランク値（0=S … 5=E）。区切り：3分未満→S, 5分→A, 6分→B, 8分→C, 9分→D, 10分以上→E
   function timeRankValue(t){
     const pts=[[180,0],[300,1],[360,2],[480,3],[540,4],[600,5]];
@@ -1764,15 +1765,15 @@ const CONFIG = {
   }
   function computeRankIndex(t){
     let v=timeRankValue(t);
-    v += statDetect*0.35 + statDrop*0.5;                 // 見つかった/手放した回数ぶん悪化（タイムのみで決まらない）
+    v += statDetect*0.35 + statDrop*0.2;                 // 見つかった/手放した回数ぶん悪化（手放しの影響は軽め）
     if(statDetect===0 && statDrop===0) v -= 0.4;         // ノーミスは少し優遇
-    return Math.max(0, Math.min(5, Math.round(v)));
+    return Math.max(0, Math.min(6, Math.round(v)));      // 6=F（Eのさらに下）
   }
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
     if(cleared){
       const t=gameTime, ri=computeRankIndex(t);
-      const score=Math.max(0, Math.round(600000/(t+30)) - statDetect*1500 - statDrop*2500);
+      const score=Math.max(500, Math.round(600000/(t+30)) - statDetect*1500 - statDrop*700);  // 手放しのペナルティは軽め／必ず500以上は付く
       const row=RANKS.map((r,i)=> i===ri
         ? "<span style='font-size:46px;font-weight:900;color:"+RANK_COLORS[i]+";text-shadow:0 0 10px "+RANK_COLORS[i]+"'>"+r+"</span>"
         : "<span style='font-size:26px;opacity:.35'>"+r+"</span>").join(" ");
@@ -1946,10 +1947,12 @@ const CONFIG = {
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
       let sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
+      if(chaser.level===NF && !metEnemyUnderground) sight*=2;   // 地下で敵に未遭遇なら地上は遭遇率を倍に
       if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
       let see=gameTime>=C.START_GRACE && same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level); // 開始直後は探知なし
       if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
-      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY); }
+      if(see){ chaser.lx=player.x; chaser.lz=player.z; chaser.alerted=true; chaser.mem=(chaser.level===1?C.B2_CHASER_MEMORY:C.CHASER_MEMORY);
+        if(player.level<NF) metEnemyUnderground=true; }                  // 地下で遭遇を記録
       else if(chaser.mem>0) chaser.mem-=dt;
       // 追跡は「巡回中＆同フロア」のみ（移動中=transitは横断に専念）。スピードは従来どおり
       const chasing = chaser.mode==="patrol" && same && chaser.mem>0;
@@ -2245,6 +2248,7 @@ const CONFIG = {
   function buildDrunkAndKonbini(sx,sz,slevel){
     drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
     dashPhase="full"; dashRes=C.DASH_DUR; dashRecT=0; dashPartial=C.DASH_PARTIAL_DUR;   // ダッシュ・スタミナを満タンに
+    metEnemyUnderground=false;   // 地下の遭遇フラグをリセット
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
       for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
