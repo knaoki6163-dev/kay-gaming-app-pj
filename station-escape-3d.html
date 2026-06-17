@@ -152,6 +152,10 @@ const CONFIG = {
   START_GRACE: 10,      // スタートから この秒数は敵に探知されない（猶予）
 
   PEDESTRIAN_COUNT: 225, // 歩行者の基準人数（各階に均等配分。地下2階/地下1階=各75人）
+
+  // ===== 通行人の描画LODのしきい値（見た目と負荷を見ながら調整）=====
+  PED_LOD_NEAR: 26,     // 同フロアでこの距離(ワールド単位)以内＝3Dモデル、これより遠い＝2Dビルボード
+  PED_LOD_FAR: 80,      // （段階3で使用予定）これより遠い／視野外／別フロアは描画しない
   GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
   GROUND_CEIL_EXTRA: 3, // 地上フロアだけ天井をこの分だけ高くする
   B1_PED_MULT: 9,       // 地下1階の歩行者は基準の何倍にするか（=675人）
@@ -291,7 +295,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.100";
+  const APP_VERSION = "Ver.101";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -851,6 +855,24 @@ const CONFIG = {
     const head=new THREE.Mesh(headGeo, headColor?new THREE.MeshLambertMaterial({color:headColor}):skinMat); head.position.y=1.5;
     addFace(head);                                             // 髪＋目で前後の向きを明示
     g.add(legs,torso,head); return g;
+  }
+
+  // ===== 遠距離の通行人用：2Dビルボード（常にカメラを向く板。服色を反映）=====
+  const BILL_W=0.95, BILL_H=1.78;                 // ビルボードの板サイズ（3Dモデルと同程度の見た目）
+  let billGeo=null, pedBillMats=null;
+  function pedBillTex(clothColor){                 // 服色ごとの簡易な人型シルエット（頭=肌/髪・胴=服色・脚=濃色）
+    const W=48,H=96,cv=document.createElement("canvas"); cv.width=W; cv.height=H; const g=cv.getContext("2d");
+    const cx=W/2, cloth="#"+(clothColor>>>0).toString(16).padStart(6,"0");
+    g.fillStyle="#2c3038"; g.fillRect(cx-8, H*0.55, 6, H*0.42); g.fillRect(cx+2, H*0.55, 6, H*0.42);  // 脚
+    g.fillStyle=cloth; g.fillRect(cx-11, H*0.30, 22, H*0.30);                                          // 胴（服色）
+    g.fillStyle="#d8a87c"; g.beginPath(); g.arc(cx, H*0.205, 9.5, 0, 7); g.fill();                     // 頭（肌）
+    g.fillStyle="#2e2620"; g.beginPath(); g.arc(cx, H*0.205, 9.5, Math.PI, 2*Math.PI); g.fill();       // 髪（上半分）
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=2; t.magFilter=THREE.LinearFilter; return t;
+  }
+  function ensureBillAssets(){
+    if(pedBillMats) return;
+    billGeo=new THREE.PlaneGeometry(BILL_W, BILL_H);   // 板サイズはジオメトリに焼き込み（dummyのscaleは1のまま）
+    pedBillMats=clothColors.map(c=>new THREE.MeshLambertMaterial({map:pedBillTex(c), alphaTest:0.5, side:THREE.DoubleSide}));
   }
 
   // ---------- ワールド構築 ----------
@@ -1686,21 +1708,27 @@ const CONFIG = {
     } else { pedMoveDir(p, k.x-p.x, k.z-p.z, dt, false); }
   }
   // 歩行者をインスタンス描画（脚/頭は共有、胴は服色ごとに分ける）
-  let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={};
+  let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={}, pedBillInsts={};
   const _pedDummy=new THREE.Object3D();
+  const _billDummy=new THREE.Object3D();
   function buildPedInstances(){
     const n=pedestrians.length;
-    pedTorsoInsts={};
+    pedTorsoInsts={}; pedBillInsts={};
     if(!n){ pedLegsInst=pedHeadInst=null; return; }
+    ensureBillAssets();
     pedLegsInst=new THREE.InstancedMesh(legGeo, legMat, n);
     pedHeadInst=new THREE.InstancedMesh(headGeo, headMat, n);
     pedLegsInst.frustumCulled=false; pedHeadInst.frustumCulled=false;
     worldRoot.add(pedLegsInst, pedHeadInst);
     const counts={};
-    pedestrians.forEach((p,i)=>{ p.gi=i; counts[p.ci]=(counts[p.ci]||0)+1; });
-    for(const ci in counts){ const im=new THREE.InstancedMesh(torsoGeo, new THREE.MeshLambertMaterial({color:clothColors[ci]}), counts[ci]); im.frustumCulled=false; pedTorsoInsts[ci]=im; }
+    pedestrians.forEach(p=>{ counts[p.ci]=(counts[p.ci]||0)+1; });   // 服色ごとの最大数（=3D胴/ビルボードの容量）
+    for(const ci in counts){
+      const im=new THREE.InstancedMesh(torsoGeo, new THREE.MeshLambertMaterial({color:clothColors[ci]}), counts[ci]); im.frustumCulled=false; pedTorsoInsts[ci]=im;
+      const bm=new THREE.InstancedMesh(billGeo, pedBillMats[ci], counts[ci]); bm.frustumCulled=false; pedBillInsts[ci]=bm;   // 遠距離用ビルボード（同容量）
+    }
     for(const ci in pedTorsoInsts) worldRoot.add(pedTorsoInsts[ci]);
-    const li={}; pedestrians.forEach(p=>{ p.ti=(li[p.ci]=(li[p.ci]||0)); li[p.ci]++; });
+    for(const ci in pedBillInsts) worldRoot.add(pedBillInsts[ci]);
+    // 描画スロットは毎フレーム動的に割り当てる（近=3D / 遠=ビルボード）。固定の p.gi/p.ti は使わない
   }
 
   // 指定フロアの、既存湧きから離れた湧き位置（ワールド座標）
@@ -2269,17 +2297,41 @@ const CONFIG = {
             p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=9+Math.random()*9; }
         }
       } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
-      setPedMatrix(p);
     }
     separateNearbyPeds();   // プレイヤー近傍の通行人が重なり過ぎない（合体を防ぐ）
-    if(pedLegsInst){ pedLegsInst.instanceMatrix.needsUpdate=true; pedHeadInst.instanceMatrix.needsUpdate=true;
-      for(const ci in pedTorsoInsts) pedTorsoInsts[ci].instanceMatrix.needsUpdate=true; }
+    renderPedestrians();    // 描画：近=3Dモデル / 遠=2Dビルボード（毎フレーム動的に振り分け）
   }
-  function setPedMatrix(p){
+  // 3D（脚/頭/胴）を1人ぶん、指定スロットに書き込む
+  function placePed3D(p, gi, ti){
     const base=p.y+FOOT_LIFT; _pedDummy.rotation.set(0,p.ry,0);
-    _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(p.gi,_pedDummy.matrix);
-    _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(p.ti,_pedDummy.matrix);
-    _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(p.gi,_pedDummy.matrix);
+    _pedDummy.position.set(p.x,base+0.4,p.z); _pedDummy.updateMatrix(); pedLegsInst.setMatrixAt(gi,_pedDummy.matrix);
+    _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(ti,_pedDummy.matrix);
+    _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(gi,_pedDummy.matrix);
+  }
+  // 描画の振り分け：近距離(同フロア)=3D / 遠距離(同フロア)=2Dビルボード / 別フロア=（段階2では従来通り3D）
+  function renderPedestrians(){
+    if(!pedLegsInst) return;
+    const NEAR2=C.PED_LOD_NEAR*C.PED_LOD_NEAR, pf=player.level;
+    const cpx=camera.position.x, cpz=camera.position.z;
+    let n3d=0; const tc={}, bc={};
+    for(const ci in pedTorsoInsts) tc[ci]=0;
+    for(const ci in pedBillInsts) bc[ci]=0;
+    for(const p of pedestrians){
+      const dx=p.x-player.x, dz=p.z-player.z;
+      const sameFloor=(p.level===pf);
+      if(!sameFloor || dx*dx+dz*dz<=NEAR2){            // 近距離 or 別フロア → 3Dモデル
+        placePed3D(p, n3d++, tc[p.ci]++);
+      } else {                                          // 遠距離(同フロア) → カメラを向く2Dビルボード
+        const bi=bc[p.ci]++, base=p.y+FOOT_LIFT;
+        _billDummy.position.set(p.x, base+BILL_H*0.5, p.z);
+        _billDummy.rotation.set(0, Math.atan2(cpx-p.x, cpz-p.z), 0);   // Y軸のみ＝直立のまま正面を向く
+        _billDummy.updateMatrix(); pedBillInsts[p.ci].setMatrixAt(bi, _billDummy.matrix);
+      }
+    }
+    pedLegsInst.count=n3d; pedHeadInst.count=n3d;
+    pedLegsInst.instanceMatrix.needsUpdate=true; pedHeadInst.instanceMatrix.needsUpdate=true;
+    for(const ci in pedTorsoInsts){ pedTorsoInsts[ci].count=tc[ci]; pedTorsoInsts[ci].instanceMatrix.needsUpdate=true; }
+    for(const ci in pedBillInsts){ pedBillInsts[ci].count=bc[ci]; pedBillInsts[ci].instanceMatrix.needsUpdate=true; }
   }
   // プレイヤー近傍（同フロア・約14m以内）の通行人だけ、重なりを押し離す軽量な分離
   function separateNearbyPeds(){
@@ -2288,16 +2340,15 @@ const CONFIG = {
     for(const p of pedestrians){ if(p.level!==player.level) continue;
       const dx=p.x-player.x, dz=p.z-player.z; if(dx*dx+dz*dz<196) near.push(p); }
     if(near.length>110){ near.sort((a,b)=>((a.x-player.x)**2+(a.z-player.z)**2)-((b.x-player.x)**2+(b.z-player.z)**2)); near.length=110; }
-    const MIN=0.85, touched=new Set();
+    const MIN=0.85;
     for(let a=0;a<near.length;a++)for(let b=a+1;b<near.length;b++){
       const pa=near[a], pb=near[b], dx=pb.x-pa.x, dz=pb.z-pa.z, d2=dx*dx+dz*dz;
       if(d2<MIN*MIN && d2>1e-4){ const d=Math.sqrt(d2), push=(MIN-d)*0.5/d, px=dx*push, pz=dz*push;
-        if(canStandPed(pa.x-px,pa.z-pz,PED_R,pa.level)){ pa.x-=px; pa.z-=pz; touched.add(pa); }
-        if(canStandPed(pb.x+px,pb.z+pz,PED_R,pb.level)){ pb.x+=px; pb.z+=pz; touched.add(pb); }
+        if(canStandPed(pa.x-px,pa.z-pz,PED_R,pa.level)){ pa.x-=px; pa.z-=pz; }
+        if(canStandPed(pb.x+px,pb.z+pz,PED_R,pb.level)){ pb.x+=px; pb.z+=pz; }
       }
     }
-    for(const p of touched) setPedMatrix(p);
-  }
+  }   // 位置の調整のみ。描画は直後の renderPedestrians() がまとめて反映
 
   // ---------- 運搬ジレンマ：酔っ払いNPC＋コンビニ ----------
   function konbiniSignTex(){
