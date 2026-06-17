@@ -155,7 +155,8 @@ const CONFIG = {
 
   // ===== 通行人の描画LODのしきい値（見た目と負荷を見ながら調整）=====
   PED_LOD_NEAR: 26,     // 同フロアでこの距離(ワールド単位)以内＝3Dモデル、これより遠い＝2Dビルボード
-  PED_LOD_FAR: 80,      // （段階3で使用予定）これより遠い／視野外／別フロアは描画しない
+  PED_LOD_FAR: 80,      // これより遠い／視野外／別フロアは描画しない（カリング）。移動計算も間引く境界
+  PED_DORMANT_STRIDE: 6,// 描画対象外(遠い/別フロア)の通行人の移動計算を何フレームに1回へ間引くか
   GROUND_PED_MULT: 30,  // 地上フロアの歩行者は基準の何倍にするか（地上=2250人）
   GROUND_CEIL_EXTRA: 3, // 地上フロアだけ天井をこの分だけ高くする
   B1_PED_MULT: 9,       // 地下1階の歩行者は基準の何倍にするか（=675人）
@@ -295,7 +296,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.101";
+  const APP_VERSION = "Ver.102";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1711,6 +1712,8 @@ const CONFIG = {
   let pedLegsInst=null, pedHeadInst=null, pedTorsoInsts={}, pedBillInsts={};
   const _pedDummy=new THREE.Object3D();
   const _billDummy=new THREE.Object3D();
+  let pedFrame=0;                                   // 移動計算の間引き用フレームカウンタ
+  const _frustum=new THREE.Frustum(), _projScreen=new THREE.Matrix4(), _sph=new THREE.Sphere();  // 視野カリング用
   function buildPedInstances(){
     const n=pedestrians.length;
     pedTorsoInsts={}; pedBillInsts={};
@@ -2267,6 +2270,7 @@ const CONFIG = {
     }
   }
   function updatePedestrians(dt){
+    pedFrame++;
     balAccum+=dt;
     if(balAccum>=0.5){ balAccum=0; balancePedestrians(); }
     densAccum+=dt; if(densAccum>=0.4){ densAccum=0; computeDensity(); }   // 人口密度を更新（空いている方へ寄る用）
@@ -2274,16 +2278,23 @@ const CONFIG = {
     stairLoad=new Array(stairs.length).fill(0);
     stairRiders=new Array(stairs.length).fill(0);
     for(const p of pedestrians){ const sid=p.ride?p.ride.sid:p.trip; if(sid>=0) stairLoad[sid]++; if(p.ride) stairRiders[p.ride.sid]++; }
+    const STRIDE=C.PED_DORMANT_STRIDE, ACT2=C.PED_LOD_FAR*C.PED_LOD_FAR, pf=player.level;
+    let i=-1;
     for(const p of pedestrians){
-      if(!p.ride && p.kind!=="T" && !(p.kind==="K"&&p.visit>0)){ p.roleT-=dt; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
-      if(p.kind==="T"){ throughStep(p, dt); p.y=(p.level-1)*FH; }
-      else if(p.kind==="K"){ kioskStep(p, dt); p.y=(p.level-1)*FH; }
-      else if(p.kind==="E"){ exitStep(p, dt); p.y=(p.level-1)*FH; }
+      i++;
+      // 描画対象外（別フロア or 遠距離）の通行人は移動計算を間引く（毎フレームでなくSTRIDE回に1回、まとめてdtを進める）
+      const dormant = (p.level!==pf) || ((p.x-player.x)**2+(p.z-player.z)**2 > ACT2);
+      if(dormant && ((pedFrame+i)%STRIDE!==0)) continue;
+      const d = dormant ? dt*STRIDE : dt;
+      if(!p.ride && p.kind!=="T" && !(p.kind==="K"&&p.visit>0)){ p.roleT-=d; if(p.roleT<=0){ setPedRole(p); p.roleT=6+Math.random()*8; } }
+      if(p.kind==="T"){ throughStep(p, d); p.y=(p.level-1)*FH; }
+      else if(p.kind==="K"){ kioskStep(p, d); p.y=(p.level-1)*FH; }
+      else if(p.kind==="E"){ exitStep(p, d); p.y=(p.level-1)*FH; }
       else if(p.kind==="M"){
         const sx0=p.x, sz0=p.z;
-        moverStep(p, dt);
+        moverStep(p, d);
         // 詰まり対策：0.7秒動けなかったら、乗車中は目的地へワープして到着扱い／接近中は諦めて徘徊（階段で固まらない）
-        if(Math.abs(p.x-sx0)+Math.abs(p.z-sz0) < 0.002){ p.stuckT=(p.stuckT||0)+dt;
+        if(Math.abs(p.x-sx0)+Math.abs(p.z-sz0) < 0.002){ p.stuckT=(p.stuckT||0)+d;
           if(p.stuckT>0.7){ p.stuckT=0;
             if(p.ride){ p.x=p.ride.dx; p.z=p.ride.dz; p.level=p.ride.goal; }
             else { p.trip=-1; p.kind="W"; p.dir=Math.random()*6.28; p.timer=0.6; p.roleT=3+Math.random()*5; } }
@@ -2296,10 +2307,10 @@ const CONFIG = {
             p.dir=aw; p.rush=1.6; p.timer=2.5;                 // 階段から離れる向きに小走り
             p.lastStair=p.ride.sid; p.ride=null; p.trip=-1; p.kind="W"; p.goal=0; p.roleT=9+Math.random()*9; }
         }
-      } else { wanderStep(p, dt); p.y=(p.level-1)*FH; }
+      } else { wanderStep(p, d); p.y=(p.level-1)*FH; }
     }
     separateNearbyPeds();   // プレイヤー近傍の通行人が重なり過ぎない（合体を防ぐ）
-    renderPedestrians();    // 描画：近=3Dモデル / 遠=2Dビルボード（毎フレーム動的に振り分け）
+    renderPedestrians();    // 描画：近=3D / 遠=ビルボード / 別フロア・視野外・遠すぎ＝非表示
   }
   // 3D（脚/頭/胴）を1人ぶん、指定スロットに書き込む
   function placePed3D(p, gi, ti){
@@ -2308,20 +2319,27 @@ const CONFIG = {
     _pedDummy.position.y=base+1.05; _pedDummy.updateMatrix(); pedTorsoInsts[p.ci].setMatrixAt(ti,_pedDummy.matrix);
     _pedDummy.position.y=base+1.5; _pedDummy.updateMatrix(); pedHeadInst.setMatrixAt(gi,_pedDummy.matrix);
   }
-  // 描画の振り分け：近距離(同フロア)=3D / 遠距離(同フロア)=2Dビルボード / 別フロア=（段階2では従来通り3D）
+  // 描画の振り分け：別フロア・視野外・遠すぎ＝非表示 / 近(同フロア)=3D / 遠(同フロア)=2Dビルボード
   function renderPedestrians(){
     if(!pedLegsInst) return;
-    const NEAR2=C.PED_LOD_NEAR*C.PED_LOD_NEAR, pf=player.level;
+    const NEAR2=C.PED_LOD_NEAR*C.PED_LOD_NEAR, FAR2=C.PED_LOD_FAR*C.PED_LOD_FAR, pf=player.level;
     const cpx=camera.position.x, cpz=camera.position.z;
+    // カメラの視錐台を最新化（プレイヤー移動後・描画前なので逆行列を作り直す）
+    camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_projScreen);
     let n3d=0; const tc={}, bc={};
     for(const ci in pedTorsoInsts) tc[ci]=0;
     for(const ci in pedBillInsts) bc[ci]=0;
     for(const p of pedestrians){
-      const dx=p.x-player.x, dz=p.z-player.z;
-      const sameFloor=(p.level===pf);
-      if(!sameFloor || dx*dx+dz*dz<=NEAR2){            // 近距離 or 別フロア → 3Dモデル
+      if(p.level!==pf) continue;                       // 別フロア → 描画しない
+      const dx=p.x-player.x, dz=p.z-player.z, d2=dx*dx+dz*dz;
+      if(d2>FAR2) continue;                             // 遠すぎ → 描画しない
+      _sph.center.set(p.x, p.y+1.0, p.z); _sph.radius=1.2;
+      if(!_frustum.intersectsSphere(_sph)) continue;    // カメラ視野外 → 描画しない
+      if(d2<=NEAR2){                                     // 近距離 → 3Dモデル
         placePed3D(p, n3d++, tc[p.ci]++);
-      } else {                                          // 遠距離(同フロア) → カメラを向く2Dビルボード
+      } else {                                          // 遠距離 → カメラを向く2Dビルボード
         const bi=bc[p.ci]++, base=p.y+FOOT_LIFT;
         _billDummy.position.set(p.x, base+BILL_H*0.5, p.z);
         _billDummy.rotation.set(0, Math.atan2(cpx-p.x, cpz-p.z), 0);   // Y軸のみ＝直立のまま正面を向く
