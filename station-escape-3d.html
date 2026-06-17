@@ -291,7 +291,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.99";
+  const APP_VERSION = "Ver.100";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -837,9 +837,10 @@ const CONFIG = {
   const eyeGeo=new THREE.SphereGeometry(0.028,6,6);
   const eyeMat=new THREE.MeshLambertMaterial({color:0x20282e});
   function addFace(head){
-    const hair=new THREE.Mesh(hairGeo, hairMat); hair.position.y=0.012; head.add(hair);  // 頭頂の髪
-    const eL=new THREE.Mesh(eyeGeo, eyeMat); eL.position.set(-0.062,0.0,0.152); head.add(eL); // 正面(+Z)の目
-    const eR=new THREE.Mesh(eyeGeo, eyeMat); eR.position.set( 0.062,0.0,0.152); head.add(eR);
+    // 髪・目は個体ごとに材質を複製（敵のemissive上書きが他の人型へ波及しないように）
+    const hair=new THREE.Mesh(hairGeo, hairMat.clone()); hair.position.y=0.012; head.add(hair);  // 頭頂の髪
+    const eL=new THREE.Mesh(eyeGeo, eyeMat.clone()); eL.position.set(-0.062,0.0,0.152); head.add(eL); // 正面(+Z)の目
+    const eR=new THREE.Mesh(eyeGeo, eyeMat.clone()); eR.position.set( 0.062,0.0,0.152); head.add(eR);
   }
   // 敵(赤)と紛らわしいので赤系は入れない
   const clothColors=[0x3a6ea5,0x4f7a4f,0x8a5a3c,0x6b6f76,0xb0892f,0x2f6f73,0x445064,0xcfcfcf];
@@ -2637,7 +2638,7 @@ const CONFIG = {
       setMission(m1El, carrying, tr('mRescue'));
       setMission(m2El, false, tr('mEscape'));
       floorEl.textContent = tr('here', floorName(player.level));
-      mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
+      mapLabel.textContent = (lang==="en"?"MAP ("+floorName(player.level)+")":"MAP（"+floorName(player.level)+"）");
       const graceLeft = Math.ceil(C.START_GRACE-gameTime);
       const enSt = alert?tr('enChase'):tr('enWander'), crTag = crouching?tr('crouchTag'):"";
       subEl.textContent = (graceLeft>0? tr('subSafe',graceLeft) : tr('subEnemy',enSt,crTag)) + tr('controls');
@@ -2655,8 +2656,10 @@ const CONFIG = {
     if(running) for(const c of chasers){ if(!c.showAlert || c.level!==player.level) continue;
       const d=Math.hypot(c.x-player.x,c.z-player.z); if(d<nearChase) nearChase=d; }
     if(nearChase<Infinity){
-      const prox=Math.max(0, Math.min(1, 1 - nearChase/(C.CHASER_SIGHT*1.15)));   // 近い=1 / 遠い=0
-      alertEl.style.opacity = (0.12 + 0.72*prox) * (0.6 + 0.4*Math.abs(Math.sin(flick*11)));
+      // 近い=強い/遠い=弱い。視認範囲は強化(地上倍率・出口付近・警戒)で最大2倍超まで伸びるため広めの基準で。
+      // 追跡中(showAlert)は必ず一定の赤みを残し、見えているのに無警告にならないようにする
+      const prox=Math.max(0, Math.min(1, 1 - nearChase/(C.CHASER_SIGHT*2.2)));   // 近い=1 / 遠い=0
+      alertEl.style.opacity = (0.2 + 0.65*prox) * (0.62 + 0.38*Math.abs(Math.sin(flick*11)));
     } else alertEl.style.opacity = 0;
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
