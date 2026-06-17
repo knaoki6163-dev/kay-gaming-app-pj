@@ -95,7 +95,7 @@ const CONFIG = {
   TILE: 5,              // 1マスのワールドサイズ
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
-  CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
+  CHASER_FLOORS: [1, 2, 3, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(5人)
   MOVE_SPEED: 6.75,     // 通常速度（手ぶら歩き）※歩行はすべて従来の0.9倍に
   WALK_SPEED: 5.4,      // 酔っ払いを連れて歩く速度
   DASH_SPEED: 9.0,      // ダッシュ（W連打）＝据え置き（速いまま）
@@ -122,6 +122,8 @@ const CONFIG = {
   CHASER_WANDER: 1.8,   // 敵が徘徊しているときの速度
   CHASER_SIGHT: 28,     // 敵の視認距離（これ以内＋視線が通ると追跡開始）
   ALERT_SIGHT_MULT: 1.5,// 一度見つけた敵の探知範囲の倍率（探知能力UP）
+  NEAR_EXIT_SIGHT_MULT: 1.7, // 出口付近では地上の敵の視認距離を上げる（運搬の最終局面を難しく）
+  NEAR_EXIT_DIST: 22,   // 出口からこの距離内で発動
   CROUCH_SPEED: 2.34,   // しゃがみ移動速度（従来の0.9倍）
   CROUCH_EYE: 0.85,     // しゃがみ時の視点の高さ
   CROUCH_SIGHT_MULT: 0.35, // しゃがむと敵の視認距離をこの倍率に（見つかりにくい）
@@ -264,7 +266,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.96";
+  const APP_VERSION = "Ver.97";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1943,11 +1945,14 @@ const CONFIG = {
   }
   function updateChasers(dt){
     swapChaserFloors();
+    let nearExit=false;   // 地上で出口付近にいるか（運搬の最終局面＝遭遇率を高める）
+    if(player.level===NF) for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<C.NEAR_EXIT_DIST){ nearExit=true; break; } }
     for(const chaser of chasers){
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
       let sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
       if(chaser.level===NF && !metEnemyUnderground) sight*=2;   // 地下で敵に未遭遇なら地上は遭遇率を倍に
+      if(chaser.level===NF && nearExit) sight*=C.NEAR_EXIT_SIGHT_MULT; // 出口付近は遭遇率UP
       if(crouching) sight*=C.CROUCH_SIGHT_MULT;                 // しゃがむと見つかりにくい
       let see=gameTime>=C.START_GRACE && same && d<sight && hasLOS(chaser.x,chaser.z,player.x,player.z,chaser.level); // 開始直後は探知なし
       if(see && crouching && pedestrians.some(p=>p.level===player.level && Math.hypot(p.x-player.x,p.z-player.z)<C.CROUCH_HIDE_PED)) see=false; // 人混みに紛れる
