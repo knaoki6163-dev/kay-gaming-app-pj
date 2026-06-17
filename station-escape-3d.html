@@ -251,7 +251,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.93";
+  const APP_VERSION = "Ver.94";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1820,7 +1820,7 @@ const CONFIG = {
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
-    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; if(stepAcc>=0.42){ stepAcc=0; sfxStep(); } }  // 足音
+    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?0.21:0.42; if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); } }  // 足音（連れている間は倍速）
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
     if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
@@ -2042,11 +2042,23 @@ const CONFIG = {
   }
   // フロアごとの人数を目標値へ。余剰フロアの人を「出入り口」経由で不足フロアの「出入り口」へ移す
   function relocatePed(p, g){
-    const src=sourcePts[g]; let X,Z;
-    if(src && src.length){ const s=src[(Math.random()*src.length)|0]; X=s.x+(Math.random()-0.5)*T*0.5; Z=s.z+(Math.random()-0.5)*T*0.5; }
-    else { X=NaN; }
-    if(!(X===X) || !canStand(X,Z,PED_R,g)){ if(src&&src.length){ const s=src[(Math.random()*src.length)|0]; X=s.x; Z=s.z; } }
-    if(!(X===X) || !canStand(X,Z,PED_R,g)){ const pool=pedPool[g]; const t=pool[(Math.random()*pool.length)|0]; const w=tileToWorld(t.x,t.y); X=w.x; Z=w.z; }
+    // 必ず外周の出入り口(出口/デパート/電車ドア)から、しかもプレイヤーから最も遠い口を選んで出現
+    // ＝目の前に何もない所からポップせず、遠くの外周から歩いて入ってくるように見せる
+    const src=sourcePts[g]; let X=NaN,Z=NaN;
+    if(src && src.length){
+      let best=null,bd=-1; for(const s of src){ const d=Math.hypot(s.x-player.x,s.z-player.z); if(d>bd){ bd=d; best=s; } }
+      for(const cand of [best, src[(Math.random()*src.length)|0]]){
+        const tx=cand.x+(Math.random()-0.5)*T*0.5, tz=cand.z+(Math.random()-0.5)*T*0.5;
+        if(canStand(tx,tz,PED_R,g)){ X=tx; Z=tz; break; }
+        if(canStand(cand.x,cand.z,PED_R,g)){ X=cand.x; Z=cand.z; break; }
+      }
+    }
+    if(!(X===X)){   // 最終手段でもプレイヤーから遠い床を選ぶ（中央ポップを避ける）
+      const pool=pedPool[g]||[]; let bd=-1;
+      for(let k=0;k<14 && pool.length;k++){ const t=pool[(Math.random()*pool.length)|0], w=tileToWorld(t.x,t.y);
+        const d=Math.hypot(w.x-player.x,w.z-player.z); if(d>bd && canStand(w.x,w.z,PED_R,g)){ bd=d; X=w.x; Z=w.z; } }
+    }
+    if(!(X===X)){ const pool=pedPool[g]||[]; if(pool.length){ const t=pool[(Math.random()*pool.length)|0], w=tileToWorld(t.x,t.y); X=w.x; Z=w.z; } else { X=p.x; Z=p.z; } }
     p.x=X; p.z=Z; p.level=g; p.y=(g-1)*FH; p.ride=null; p.lastStair=-1; p.trip=-1; p.roleT=1+Math.random()*4; setPedRole(p);
   }
   function balancePedestrians(){
@@ -2214,9 +2226,9 @@ const CONFIG = {
       const w=laneTile(li), isTarget=(li===targetLane);
       const g=makeHuman(isTarget?0x8e44ad:0x717784, 0x3a2a4a, 0xe6a07a); worldRoot.add(g); // 目標=紫/デコイ=灰
       if(isTarget){
-        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,8,8),
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,FH*0.82,8),
           new THREE.MeshBasicMaterial({color:0xffd23a, transparent:true, opacity:0.5})); beacon.material.toneMapped=false;
-        beacon.position.set(w.x,4,w.z); worldRoot.add(beacon);
+        beacon.position.set(w.x,FH*0.43,w.z); worldRoot.add(beacon);   // 天井を突き抜けない高さ
         const mg=new THREE.Group();
         const mbg=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.26), new THREE.MeshBasicMaterial({color:0x10141a})); mbg.material.toneMapped=false;
         const mfill=new THREE.Mesh(new THREE.PlaneGeometry(1.4,0.2), new THREE.MeshBasicMaterial({color:0x4caf50})); mfill.material.toneMapped=false; mfill.position.z=0.01;
@@ -2270,8 +2282,8 @@ const CONFIG = {
         const w=tileToWorld(c.x,c.y);
         if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
         worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));
-        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,7,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
-        beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+3.5,w.z); beacon.visible=false; worldRoot.add(beacon);
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,FH*0.82,8), new THREE.MeshBasicMaterial({color:0x3b9bff,transparent:true,opacity:0.55}));
+        beacon.material.toneMapped=false; beacon.position.set(w.x,(f-1)*FH+FH*0.43,w.z); beacon.visible=false; worldRoot.add(beacon);   // 天井を突き抜けない高さ
         toilets.push({x:w.x,z:w.z,level:f,beacon}); made++;
       }
     }
@@ -2343,7 +2355,7 @@ const CONFIG = {
     if(!drunk) return;
     drunk.sway+=dt*4; if(drunkMsgT>0) drunkMsgT-=dt;
     if(!carrying){
-      if(drunk.level===player.level && Math.hypot(player.x-drunk.x,player.z-drunk.z)<C.DRUNK_TOUCH){
+      if(lostT<=0 && drunk.level===player.level && Math.hypot(player.x-drunk.x,player.z-drunk.z)<C.DRUNK_TOUCH){  // 手放し直後の猶予中は連続再取得しない（オーバーカウント防止）
         carrying=true; playerTrail=[]; if(drunk.beacon) drunk.beacon.visible=false;
         if(toiletState==="none") resetToiletUrge();   // 尿意が保留中なら引き継ぐ（ドロップで時計を巻き戻せない）
         setDrunkMsg("酔っ払いを連れた！地上の正しい出口へ送り届けろ",3.5); sfxFloor();
@@ -2368,7 +2380,7 @@ const CONFIG = {
     const fy=Math.hypot(mvx,mvz)>0.0001?Math.atan2(mvx,mvz):drunk.group.rotation.y;
     drunk.group.rotation.set(0, fy, Math.sin(drunk.sway)*0.12);               // ふらつき
     drunk.group.position.set(drunk.x, drunk.y+FOOT_LIFT, drunk.z);
-    if(drunk.beacon && drunk.beacon.visible) drunk.beacon.position.set(drunk.x,(drunk.level-1)*FH+4,drunk.z);
+    if(drunk.beacon && drunk.beacon.visible) drunk.beacon.position.set(drunk.x,(drunk.level-1)*FH+FH*0.43,drunk.z);
     updateToiletUrge(dt);   // 尿意（予兆→猶予→失敗）
   }
   function checkResult(){
@@ -2469,9 +2481,14 @@ const CONFIG = {
       const graceLeft = Math.ceil(C.START_GRACE-gameTime);
       subEl.textContent = (graceLeft>0? "🛡 安全（敵探知なし）あと"+graceLeft+"秒　/　" : ("敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　"))+"WASD移動・C:しゃがむ・マウス視点";
     }
-    // 敵に見つかって追われている間は画面周囲を赤くチカチカ（サイレント追跡は除く）
-    const chased = running && chasers.some(c=>c.showAlert);
-    alertEl.style.opacity = chased ? (0.35 + 0.55*Math.abs(Math.sin(flick*11))) : 0;
+    // 敵に見つかって追われている間は画面周囲を赤くチカチカ（近いほど強く、遠ざかると弱まる）
+    let nearChase=Infinity;
+    if(running) for(const c of chasers){ if(!c.showAlert || c.level!==player.level) continue;
+      const d=Math.hypot(c.x-player.x,c.z-player.z); if(d<nearChase) nearChase=d; }
+    if(nearChase<Infinity){
+      const prox=Math.max(0, Math.min(1, 1 - nearChase/(C.CHASER_SIGHT*1.15)));   // 近い=1 / 遠い=0
+      alertEl.style.opacity = (0.12 + 0.72*prox) * (0.6 + 0.4*Math.abs(Math.sin(flick*11)));
+    } else alertEl.style.opacity = 0;
     renderer.render(scene,camera);
     requestAnimationFrame(loop);
   }
