@@ -87,8 +87,8 @@ const CONFIG = {
   WALL_H: 4.5,          // 1フロアの高さ（各階の段差）
 
   CHASER_FLOORS: [1, 2, 3, 3, 3, 3], // 敵の配置階（level）。1=地下2階, 2=地下1階, 3=地上(4人)
-  MOVE_SPEED: 6.0,      // プレイヤーの移動速度（=走り。酔っ払いを離している時）
-  WALK_SPEED: 3.6,      // 酔っ払いを連れている時のプレイヤー速度（走れない）
+  MOVE_SPEED: 9.0,      // 手ぶら時の移動速度（従来の歩行6.0の1.5倍）
+  WALK_SPEED: 6.0,      // 酔っ払いを連れている時のプレイヤー速度（＝従来の歩行スピード）
   DRUNK_SPEED: 4.0,     // 酔っ払いがついてくる速度
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
@@ -244,7 +244,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.87";
+  const APP_VERSION = "Ver.88";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1669,7 +1669,7 @@ const CONFIG = {
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    const spd = carrying ? C.CHASER_WANDER : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED); // 連れている間は敵の歩行速度と同じ
+    const spd = carrying ? C.WALK_SPEED : (crouching ? C.CROUCH_SPEED : C.MOVE_SPEED); // 連れている間=従来の歩行速度 / 手ぶら=その1.5倍
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
