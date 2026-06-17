@@ -16,6 +16,12 @@
   #goal { font-size:30px; font-weight:900; color:#ffe33a; letter-spacing:1px;
     text-shadow:0 0 6px rgba(0,0,0,.9), 0 2px 4px #000; }
   #sub  { font-size:12px; color:#cdd3da; margin-top:2px; }
+  #dash { display:inline-block; position:relative; margin-top:5px; width:170px; height:17px;
+    background:rgba(20,30,45,.72); border-radius:5px; overflow:hidden; vertical-align:middle;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  #dashFill { position:absolute; left:0; top:0; bottom:0; width:100%; background:#33d17a; }
+  #dashTxt { position:absolute; left:0; right:0; top:0; bottom:0; text-align:center;
+    font-size:11px; font-weight:bold; color:#fff; line-height:17px; text-shadow:0 1px 2px rgba(0,0,0,.85); }
 
   #floor { position:fixed; top:8px; left:10px; z-index:8; font-size:15px; font-weight:bold;
     color:#fff; background:rgba(20,30,45,.85); padding:4px 10px; border-radius:6px;
@@ -93,6 +99,11 @@ const CONFIG = {
   MOVE_SPEED: 6.75,     // 通常速度（手ぶら歩き）※歩行はすべて従来の0.9倍に
   WALK_SPEED: 5.4,      // 酔っ払いを連れて歩く速度
   DASH_SPEED: 9.0,      // ダッシュ（W連打）＝据え置き（速いまま）
+  DASH_DUR: 10,         // 9.0ダッシュの持続上限(秒)。使い切ると回復待ち
+  DASH_PARTIAL_SPEED: 8.0, // 回復途中で使える弱ダッシュの速度
+  DASH_PARTIAL_AT: 10,  // ダッシュ終了から何秒後に8.0ダッシュが使えるか
+  DASH_PARTIAL_DUR: 5,  // 8.0ダッシュの持続(秒)
+  DASH_FULL_AT: 20,     // ダッシュ終了から何秒で9.0ダッシュが完全復活するか
   DRUNK_SPEED: 6.5,     // 酔っ払いがついてくる速度（連れて歩いても離れない様に歩行より少し速い）
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
@@ -168,6 +179,7 @@ const CONFIG = {
 <div id="hud" class="hidden">
   <div id="goal"></div>
   <div id="sub"></div>
+  <div id="dash" class="hidden"><div id="dashFill"></div><span id="dashTxt"></span></div>
 </div>
 
 <div id="touch">
@@ -246,12 +258,13 @@ const CONFIG = {
   const floorEl = document.getElementById("floor");
   const carryEl = document.getElementById("carry");
   const lostEl = document.getElementById("lost");
+  const dashEl = document.getElementById("dash"), dashFillEl = document.getElementById("dashFill"), dashTxtEl = document.getElementById("dashTxt");
   const timerEl = document.getElementById("timer");
   const alertEl = document.getElementById("alert");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.94";
+  const APP_VERSION = "Ver.95";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1673,6 +1686,7 @@ const CONFIG = {
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
   const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false, wMash=0, lostT=0;
+  let dashPhase="full", dashRes=10, dashRecT=0, dashPartial=5;   // ダッシュ・スタミナ（9.0最長10秒→終了後10秒で8.0が5秒→20秒で9.0完全復活）
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
     if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
@@ -1728,7 +1742,7 @@ const CONFIG = {
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
-    gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden");
+    gameTime=0; timerEl.textContent="TIME 0:00"; timerEl.classList.remove("hidden"); dashEl.classList.remove("hidden");
     const showMap = C.SHOW_MAP && !userMode;   // ユーザープレイ時はマップを消す
     if(showMap){ mapCv.width=C.COLS*MAP_CELL; mapCv.height=C.ROWS*MAP_CELL;
       mapCv.classList.remove("hidden"); mapLabel.classList.remove("hidden"); mapToggle.classList.remove("hidden");
@@ -1769,7 +1783,7 @@ const CONFIG = {
     } else {
       resultInfo.innerHTML = "タイム "+fmtTime(gameTime);
     }
-    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden");
+    resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden"); dashEl.classList.add("hidden");
     if(cleared) sfxClear(); else sfxOver(); }
 
   function beginOrResume(asUser){
@@ -1805,12 +1819,25 @@ const CONFIG = {
     wMash=Math.max(0, wMash-dt*3.0); if(lostT>0) lostT-=dt;   // W連打メーターの減衰（毎秒3回より速く連打で発動）
     const mashing = wMash>=1.8;                              // 連打中＝ダッシュ意思
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
+    // ダッシュ・スタミナ：9.0は最長10秒→使い切ると回復待ち。終了から10秒で8.0が5秒使え、20秒で9.0完全復活
+    const wantDash = mashing && !carrying && !crouching;
+    let dashAvail=0;                                          // いま出せるダッシュ速度（0=不可）
+    if(dashPhase==="full"){
+      if(dashRes>0){ dashAvail=C.DASH_SPEED;
+        if(wantDash){ dashRes-=dt; if(dashRes<=0){ dashRes=0; dashPhase="cool"; dashRecT=0; dashPartial=C.DASH_PARTIAL_DUR; } } }
+    } else {                                                  // 回復待ち（経過は実時間で進む＝20秒で必ず9.0復活）
+      dashRecT+=dt;
+      if(dashRecT>=C.DASH_FULL_AT){ dashPhase="full"; dashRes=C.DASH_DUR; dashAvail=C.DASH_SPEED; }
+      else if(dashRecT>=C.DASH_PARTIAL_AT && dashPartial>0){ dashAvail=C.DASH_PARTIAL_SPEED;
+        if(wantDash){ dashPartial-=dt; if(dashPartial<0) dashPartial=0; } }
+    }
+    const dashing = wantDash && dashAvail>0;
     let spd;
     if(crouching) spd=C.CROUCH_SPEED;
     else if(carrying){
       if(mashing){ dropDrunk(); spd=C.MOVE_SPEED; }          // 連れて連打→手が離れて通常速度に
       else spd=C.WALK_SPEED;                                 // 連れて歩き＝はぐれない
-    } else spd = mashing ? C.DASH_SPEED : C.MOVE_SPEED;       // 手ぶら：歩き=通常 / 連打=ダッシュ
+    } else spd = dashing ? dashAvail : C.MOVE_SPEED;          // 手ぶら：ダッシュ可なら9.0/8.0 / それ以外=通常
     let mf=0,ms=0;
     if(keys["w"]||keys["arrowup"]||mashing)mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;  // 連打中は前進継続
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
@@ -2217,6 +2244,7 @@ const CONFIG = {
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
     drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
+    dashPhase="full"; dashRes=C.DASH_DUR; dashRecT=0; dashPartial=C.DASH_PARTIAL_DUR;   // ダッシュ・スタミナを満タンに
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
       for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
@@ -2480,6 +2508,14 @@ const CONFIG = {
       mapLabel.textContent = "MAP（"+floorName(player.level)+"）";
       const graceLeft = Math.ceil(C.START_GRACE-gameTime);
       subEl.textContent = (graceLeft>0? "🛡 安全（敵探知なし）あと"+graceLeft+"秒　/　" : ("敵: "+(alert?"追跡中！":"徘徊")+(crouching?"　/　🫥しゃがみ中":"")+"　/　"))+"WASD移動・C:しゃがむ・マウス視点";
+      // ダッシュ・スタミナのゲージ
+      let dfrac, dcol, dtxt;
+      if(dashPhase==="full"){ dfrac=dashRes/C.DASH_DUR; dcol="#33d17a"; dtxt="⚡ダッシュ9.0  残"+Math.ceil(dashRes)+"秒"; }
+      else if(dashRecT>=C.DASH_PARTIAL_AT && dashPartial>0){ dfrac=dashPartial/C.DASH_PARTIAL_DUR; dcol="#f0a93a"; dtxt="⚡弱ダッシュ8.0  残"+Math.ceil(dashPartial)+"秒"; }
+      else { dfrac=Math.min(1,dashRecT/C.DASH_FULL_AT); dcol="#7a8088";
+        const nx=dashRecT<C.DASH_PARTIAL_AT?(C.DASH_PARTIAL_AT-dashRecT):(C.DASH_FULL_AT-dashRecT);
+        const lab=dashRecT<C.DASH_PARTIAL_AT?"8.0まで":"9.0まで"; dtxt="ダッシュ回復中… "+lab+Math.ceil(nx)+"秒"; }
+      dashFillEl.style.width=(Math.max(0,Math.min(1,dfrac))*100)+"%"; dashFillEl.style.background=dcol; dashTxtEl.textContent=dtxt;
     }
     // 敵に見つかって追われている間は画面周囲を赤くチカチカ（近いほど強く、遠ざかると弱まる）
     let nearChase=Infinity;
