@@ -134,6 +134,9 @@ const CONFIG = {
   TRAIN_INTERVAL: 28,   // 電車到着（人混み発生）の間隔(秒)
   CROWD_DURATION: 12,   // 到着後、ホームが混雑している秒数
   CROWD_SURGE: 1100,    // 到着時にホームへ集まる通行人の数（電車から大量に＝従来の5倍）
+  CROWD_TO_B1_FRAC: 0.5,// 人混みのうち地下1階へ移る割合（半分）
+  CROWD_B1_DWELL: 14,   // 移った人混みが地下1階に滞留する秒数
+  CROWD_GROUND_SPREAD: 18, // その後、地上へ分散的に出ていくのにかける秒数
   THROUGH_PED_COUNT: 60,// 地下1階の前後の別ビルを通り抜ける人流の数（半分が前→後ろ、半分が後ろ→前）
   CHASER_SPEED: 4.0,    // 敵が追跡してくる速度（プレイヤーの歩行3.6より少し速い／走り6.0より遅い）
   CHASER_WANDER: 2.0,   // 敵が徘徊しているときの速度
@@ -299,7 +302,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.105";
+  const APP_VERSION = "Ver.106";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -338,7 +341,9 @@ const CONFIG = {
     dashFull:{ ja:s=>'⚡ダッシュ8.0  残'+s+'秒', en:s=>'⚡Dash 8.0  '+s+'s left' },
     dashPartial:{ ja:s=>'⚡弱ダッシュ7.0  残'+s+'秒', en:s=>'⚡Weak dash 7.0  '+s+'s left' },
     dashCool:{ ja:(lab,s)=>'ダッシュ回復中… '+lab+s+'秒', en:(lab,s)=>'Dash recovering… '+lab+s+'s' },
-    dashTo8:{ ja:'7.0まで', en:'7.0 in ' }, dashTo9:{ ja:'8.0まで', en:'8.0 in ' },
+    dashReadyFull:{ ja:'⚡ダッシュ8.0 使用可', en:'⚡Dash 8.0 ready' },
+    dashReadyWeak:{ ja:s=>'⚡弱ダッシュ7.0 使用可（通常まで'+s+'秒）', en:s=>'⚡Weak 7.0 ready (full in '+s+'s)' },
+    dashCoolWeak:{ ja:s=>'ダッシュ回復中… 弱まで'+s+'秒', en:s=>'Dash recovering… weak in '+s+'s' },
     // 酔っ払いの一時メッセージ
     msgDrop:{ ja:'ダッシュで手が離れた！もう一度連れに行け', en:'Dashing made you drop him! Go get him again' },
     msgToiletWarn:{ ja:'酔っ払いがソワソワし始めた…トイレが近いぞ！', en:'The drunk is getting restless… he needs a toilet soon!' },
@@ -896,7 +901,7 @@ const CONFIG = {
     {name:"小田急線",en:"Odakyu Line",col:0x0072bc}];
   let targetLane=0;
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
-  let crowdTimer=8, crowdActive=false, crowdEndT=0, baseB2Target=0;   // 電車到着で起きる動的な人混み
+  let crowdTimer=8, crowdPhase="idle", crowdT=0, baseB2Target=0, baseB1Target=0, baseGroundTarget=0;   // 電車到着で起きる動的な人混みと、その後のB2→B1→地上の流れ
   const FOOT_LIFT=0.1;  // 人モブの足元をスラブより少し上げ、下の階から点で見えないようにする
 
   const wallMat=new THREE.MeshLambertMaterial({map:wallTex,color:0xffffff});
@@ -1510,7 +1515,8 @@ const CONFIG = {
     const basePer=Math.round(C.PEDESTRIAN_COUNT/NF);
     pedTargets={};
     for(let f=1;f<=NF;f++) pedTargets[f]=(f===NF)?basePer*C.GROUND_PED_MULT:(f===1?basePer*C.B2_PED_MULT:basePer*C.B1_PED_MULT);
-    baseB2Target=pedTargets[1]; crowdActive=false; crowdEndT=0; crowdTimer=C.TRAIN_INTERVAL*0.6;   // 電車到着の人混み用
+    baseB2Target=pedTargets[1]; baseB1Target=pedTargets[2]; baseGroundTarget=pedTargets[NF];
+    crowdPhase="idle"; crowdT=0; crowdTimer=C.TRAIN_INTERVAL*0.6;   // 電車到着の人混み用
     // 各フロアの「人の出入り口」(人数調節に使う): 地上=出口, 地下1階=デパート, 地下2階=電車ドア
     sourcePts={ [NF]: exits.map(e=>({x:e.sx,z:e.sz})), 2: deptDoors.slice(), 1: trainDoors.slice() };
     buildFlowFields();   // フロア間移動の経路場（行き止まりに詰まらない誘導）
@@ -1867,7 +1873,7 @@ const CONFIG = {
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
   const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, alertPrev=false, crouching=false, wMash=0, lostT=0;
-  let dashPhase="full", dashRes=10, dashRecT=0, dashPartial=5;   // ダッシュ・スタミナ（9.0最長10秒→終了後10秒で8.0が5秒→20秒で9.0完全復活）
+  let dashBursting=false, dashBurstSpeed=8.0, dashBurstLeft=0, dashRecT=20, dashGrace=0;   // ダッシュ・スタミナ（実行中バースト＋直近終了からの回復計時）
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
     if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
@@ -2000,17 +2006,20 @@ const CONFIG = {
     wMash=Math.max(0, wMash-dt*3.0); if(lostT>0) lostT-=dt;   // W連打メーターの減衰（毎秒3回より速く連打で発動）
     const mashing = wMash>=1.8;                              // 連打中＝ダッシュ意思
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    // ダッシュ・スタミナ：9.0は最長10秒→使い切ると回復待ち。終了から10秒で8.0が5秒使え、20秒で9.0完全復活
+    // ダッシュ・スタミナ：ダッシュ/弱ダッシュのどれを使っても「そのダッシュ終了」から計時し直す。
+    //   終了10秒後＝弱ダッシュ(7.0)が使える / 終了20秒後＝通常ダッシュ(8.0)。よって通常は常に直近ダッシュの20秒後のみ。
     const wantDash = mashing && !carrying && !crouching;
     let dashAvail=0;                                          // いま出せるダッシュ速度（0=不可）
-    if(dashPhase==="full"){
-      if(dashRes>0){ dashAvail=C.DASH_SPEED;
-        if(wantDash){ dashRes-=dt; if(dashRes<=0){ dashRes=0; dashPhase="cool"; dashRecT=0; dashPartial=C.DASH_PARTIAL_DUR; } } }
-    } else {                                                  // 回復待ち（経過は実時間で進む＝20秒で必ず9.0復活）
+    if(dashBursting){                                         // ダッシュ実行中
+      if(wantDash && dashBurstLeft>0){ dashAvail=dashBurstSpeed; dashBurstLeft-=dt; dashGrace=0;
+        if(dashBurstLeft<=0){ dashBurstLeft=0; dashBursting=false; dashRecT=0; } }   // 使い切り→終了＝回復開始
+      else { dashGrace+=dt; if(dashGrace>0.4){ dashBursting=false; dashRecT=0; } }   // 連打が0.4秒途切れたら終了＝回復開始
+    } else {                                                  // 回復待ち（直近ダッシュ終了からの経過）
       dashRecT+=dt;
-      if(dashRecT>=C.DASH_FULL_AT){ dashPhase="full"; dashRes=C.DASH_DUR; dashAvail=C.DASH_SPEED; }
-      else if(dashRecT>=C.DASH_PARTIAL_AT && dashPartial>0){ dashAvail=C.DASH_PARTIAL_SPEED;
-        if(wantDash){ dashPartial-=dt; if(dashPartial<0) dashPartial=0; } }
+      if(wantDash){
+        if(dashRecT>=C.DASH_FULL_AT){ dashBursting=true; dashBurstSpeed=C.DASH_SPEED; dashBurstLeft=C.DASH_DUR-dt; dashGrace=0; dashAvail=C.DASH_SPEED; }
+        else if(dashRecT>=C.DASH_PARTIAL_AT){ dashBursting=true; dashBurstSpeed=C.DASH_PARTIAL_SPEED; dashBurstLeft=C.DASH_PARTIAL_DUR-dt; dashGrace=0; dashAvail=C.DASH_PARTIAL_SPEED; }
+      }
     }
     const dashing = wantDash && dashAvail>0;
     let spd;
@@ -2481,7 +2490,7 @@ const CONFIG = {
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
     drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
-    dashPhase="full"; dashRes=C.DASH_DUR; dashRecT=0; dashPartial=C.DASH_PARTIAL_DUR;   // ダッシュ・スタミナを満タンに
+    dashBursting=false; dashBurstLeft=0; dashGrace=0; dashRecT=C.DASH_FULL_AT;   // 開始時は通常ダッシュ使用可
     metEnemyUnderground=false;   // 地下の遭遇フラグをリセット
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
@@ -2602,18 +2611,37 @@ const CONFIG = {
       moved++;
     }
   }
+  // 電車到着→ホーム混雑→半分が地下1階へ→一定時間滞留→地上へ分散的に順次移動、という人の流れ
   function updateCrowd(dt){
-    if(!crowdActive){
+    const half=Math.round(C.CROWD_SURGE*C.CROWD_TO_B1_FRAC);
+    if(crowdPhase==="idle"){
       crowdTimer-=dt;
       if(crowdTimer<=0){
-        crowdActive=true; crowdEndT=C.CROWD_DURATION;
+        crowdPhase="platform"; crowdT=C.CROWD_DURATION;
         pedTargets[1]=baseB2Target+C.CROWD_SURGE;   // 混雑の間はホームの目標人数を増やして維持
         surgeToPlatform(C.CROWD_SURGE);
         setDrunkMsg("msgTrain",3.2); trainPass();
       }
-    } else {
-      crowdEndT-=dt;
-      if(crowdEndT<=0){ crowdActive=false; pedTargets[1]=baseB2Target; crowdTimer=C.TRAIN_INTERVAL*(0.8+Math.random()*0.5); }
+    } else if(crowdPhase==="platform"){
+      crowdT-=dt;
+      if(crowdT<=0){                                 // ホーム混雑が落ち着く→半分を地下1階へ
+        crowdPhase="dwellB1"; crowdT=C.CROWD_B1_DWELL;
+        pedTargets[1]=baseB2Target;                  // 地下2階は通常へ（人が捌ける）
+        pedTargets[2]=baseB1Target+half;             // 半分は地下1階に集まり滞留（残り半分は地上へ自然に戻る）
+      }
+    } else if(crowdPhase==="dwellB1"){
+      crowdT-=dt;
+      if(crowdT<=0){ crowdPhase="toGround"; crowdT=C.CROWD_GROUND_SPREAD; }  // 滞留終了→地上へ分散開始
+    } else if(crowdPhase==="toGround"){
+      crowdT-=dt;
+      const frac=Math.max(0, crowdT/C.CROWD_GROUND_SPREAD);   // 1→0：B1の余剰を時間をかけて地上へ移す
+      const onB1=Math.round(half*frac), toGround=half-onB1;
+      pedTargets[2]=baseB1Target+onB1;               // 地下1階は徐々に減り
+      pedTargets[NF]=baseGroundTarget+toGround;      // 地上は徐々に増える＝分散的に順に出ていく
+      if(crowdT<=0){
+        crowdPhase="idle"; pedTargets[2]=baseB1Target; pedTargets[NF]=baseGroundTarget;
+        crowdTimer=C.TRAIN_INTERVAL*(0.8+Math.random()*0.5);
+      }
     }
   }
   function updateDrunk(dt){
@@ -2750,11 +2778,11 @@ const CONFIG = {
       subEl.textContent = (graceLeft>0? tr('subSafe',graceLeft) : tr('subEnemy',enSt,crTag)) + tr('controls');
       // ダッシュ・スタミナのゲージ
       let dfrac, dcol, dtxt;
-      if(dashPhase==="full"){ dfrac=dashRes/C.DASH_DUR; dcol="#33d17a"; dtxt=tr('dashFull',Math.ceil(dashRes)); }
-      else if(dashRecT>=C.DASH_PARTIAL_AT && dashPartial>0){ dfrac=dashPartial/C.DASH_PARTIAL_DUR; dcol="#f0a93a"; dtxt=tr('dashPartial',Math.ceil(dashPartial)); }
-      else { dfrac=Math.min(1,dashRecT/C.DASH_FULL_AT); dcol="#7a8088";
-        const nx=dashRecT<C.DASH_PARTIAL_AT?(C.DASH_PARTIAL_AT-dashRecT):(C.DASH_FULL_AT-dashRecT);
-        const lab=dashRecT<C.DASH_PARTIAL_AT?tr('dashTo8'):tr('dashTo9'); dtxt=tr('dashCool',lab,Math.ceil(nx)); }
+      if(dashBursting && dashBurstSpeed>=C.DASH_SPEED){ dfrac=dashBurstLeft/C.DASH_DUR; dcol="#33d17a"; dtxt=tr('dashFull',Math.ceil(dashBurstLeft)); }
+      else if(dashBursting){ dfrac=dashBurstLeft/C.DASH_PARTIAL_DUR; dcol="#f0a93a"; dtxt=tr('dashPartial',Math.ceil(dashBurstLeft)); }
+      else if(dashRecT>=C.DASH_FULL_AT){ dfrac=1; dcol="#33d17a"; dtxt=tr('dashReadyFull'); }              // 通常ダッシュ使用可
+      else if(dashRecT>=C.DASH_PARTIAL_AT){ dfrac=1; dcol="#f0a93a"; dtxt=tr('dashReadyWeak',Math.ceil(C.DASH_FULL_AT-dashRecT)); }  // 弱ダッシュ使用可（通常まで）
+      else { dfrac=dashRecT/C.DASH_PARTIAL_AT; dcol="#7a8088"; dtxt=tr('dashCoolWeak',Math.ceil(C.DASH_PARTIAL_AT-dashRecT)); }       // 回復中（弱まで）
       dashFillEl.style.width=(Math.max(0,Math.min(1,dfrac))*100)+"%"; dashFillEl.style.background=dcol; dashTxtEl.textContent=dtxt;
     }
     // 敵に見つかって追われている間は画面周囲を赤くチカチカ（近いほど強く、遠ざかると弱まる）
