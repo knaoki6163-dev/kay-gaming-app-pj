@@ -251,7 +251,7 @@ const CONFIG = {
 </div>
 
 <div id="start" class="overlay">
-  <h1>Exit Shinjuku</h1>
+  <h1 id="title">新宿駅から出られない</h1>
   <p id="desc">酔っ払いを見つけて、地上の出口まで送り届けろ。<br>
      連れている間は走れない。ヤクザに捕まるな。<br>
      [WASD]移動 [マウス]視点 [しゃがむ]隠れる</p>
@@ -329,7 +329,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.122";
+  const APP_VERSION = "Ver.123";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -344,6 +344,7 @@ const CONFIG = {
   const m1El = document.getElementById("m1"), m2El = document.getElementById("m2");
   const descEl = document.getElementById("desc");
   const LANG = {
+    title:{ ja:'新宿駅から出られない', en:'Shinjuku Station Meltdown' },
     desc:{ ja:'酔っ払いを見つけて、地上の出口まで送り届けろ。<br>連れている間は走れない。ヤクザに捕まるな。<br>[WASD]移動 [マウス]視点 [しゃがむ]隠れる',
            en:'Find the drunk and carry him to a ground-level exit.<br>You can\'t run while carrying him. Don\'t get caught by the yakuza.<br>[WASD] Move  [Mouse] Look  [Crouch] Hide' },
     devBtn:{ ja:'開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span>', en:'Play as Developer<br><span style="font-size:12px;opacity:.85">(map shown)</span>' },
@@ -391,6 +392,8 @@ const CONFIG = {
   };
   function tr(key, ...a){ const e=LANG[key]; if(e==null) return key; const v=(e[lang]!=null)?e[lang]:e.ja; return typeof v==="function"?v(...a):v; }
   function applyLang(){
+    const titleEl=document.getElementById("title");
+    if(titleEl && titleEl.textContent!=="一時停止中") titleEl.textContent = tr('title');   // 一時停止表示は上書きしない
     descEl.innerHTML = tr('desc');
     devBtn.innerHTML = tr('devBtn'); userBtn.innerHTML = tr('userBtn');
     restartBtn.textContent = tr('restart');
