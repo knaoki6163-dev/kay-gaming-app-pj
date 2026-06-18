@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.126";
+  const APP_VERSION = "Ver.127";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -875,9 +875,9 @@ const CONFIG = {
   // 建物外周をぐるりと歩ける広場リング（地上階のみ）。各フロアの出口が外側でつながる
   function inOutsideRing(x,z,f){
     if(f<2) return false;
-    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING;
+    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING, m=1.4;   // m=外壁ぶんのマージン
     if(x<-R||x>W+R||z<-R||z>D+R) return false;     // リングの外
-    if(x>0&&x<W&&z>0&&z<D) return false;            // 建物内部はリングではない
+    if(x>-m&&x<W+m&&z>-m&&z<D+m) return false;      // 建物＋外壁の帯は対象外（建物にはゲート＝inExitPlazaからのみ入れる＝すり抜け防止）
     return true;
   }
   function allFloorTiles(f){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grids[f][y][x]===0)a.push({x,y}); return a; }
@@ -1210,6 +1210,7 @@ const CONFIG = {
     for(const c of cand){
       if(placed.length>=want) break;
       if(placed.some(p=>Math.abs(p.x-c.x)+Math.abs(p.y-c.y)<5)) continue;
+      if(exits.some(e=>e.level===f && Math.abs(e.tx-c.x)+Math.abs(e.ty-c.y)<6)) continue;   // 出口の近くにはデパート出入口を置かない（表示の干渉防止）
       placed.push(c);
       const w=tileToWorld(c.x,c.y);
       deptDoors.push({x:w.x, z:w.z});   // デパートの人の出入り口（手前の床）
@@ -1248,22 +1249,26 @@ const CONFIG = {
     return out;
   }
   function buildBuildingPortal(f, side){
-    const base=(f-1)*FH, H=FH*0.94, width=(C.COLS-3)*T, cx=C.COLS*T/2;
+    const base=(f-1)*FH, H=FH*0.94, cx=C.COLS*T/2;
     const z = side==="front" ? T*0.55 : C.ROWS*T - T*0.55;
     const face = side==="front" ? 1 : -1;                 // フロア内側へ向く向き（前=+z / 後ろ=-z）
-    const g=new THREE.Group();
-    const frame=new THREE.Mesh(new THREE.BoxGeometry(width+T, H+0.9, 0.5), new THREE.MeshLambertMaterial({color:0x23282e}));
-    frame.position.set(cx, base+H/2, z - face*0.3); g.add(frame);
-    const glow=new THREE.Mesh(new THREE.PlaneGeometry(width, H*0.96), new THREE.MeshBasicMaterial({color:0xf2e6c4}));
-    glow.material.toneMapped=false; glow.position.set(cx, base+H/2, z - face*0.14); if(face<0) glow.rotation.y=Math.PI; g.add(glow);
-    const gtex=deptGlassTex(); gtex.wrapS=THREE.RepeatWrapping; gtex.repeat.set(Math.round(width/T),1);
-    const glass=new THREE.Mesh(new THREE.PlaneGeometry(width, H*0.82), new THREE.MeshBasicMaterial({map:gtex,transparent:true,opacity:0.5,side:THREE.DoubleSide}));
-    glass.material.toneMapped=false; glass.position.set(cx, base+H*0.41, z); if(face<0) glass.rotation.y=Math.PI; g.add(glass);
-    const sg=new THREE.Mesh(new THREE.PlaneGeometry(width*0.92, FH*0.36), new THREE.MeshBasicMaterial({map:buildingSignTex(side),side:THREE.DoubleSide}));
-    sg.material.toneMapped=false; sg.position.set(cx, base+H*0.88, z+face*0.06); if(face<0) sg.rotation.y=Math.PI; g.add(sg);
-    const can=new THREE.Mesh(new THREE.BoxGeometry(width+T, 0.32, T*0.9), new THREE.MeshLambertMaterial({color:0x2c3238}));
-    can.position.set(cx, base+H*0.74, z+face*(T*0.45)); g.add(can);
-    worldRoot.add(g);
+    // この側(前/後ろ)にある出口の開口x範囲は避けてスリット状に作る＝出口と干渉しない
+    const exRanges = exits.filter(e=> e.level===f && (side==="front"? e.oy<0 : e.oy>0)).map(e=>{ const hw=(e.wide?3:e.mid?2:1)*T; return [e.x-hw, e.x+hw]; });
+    const blocked=(x)=> exRanges.some(r=> x>r[0] && x<r[1]);
+    const frameMat=new THREE.MeshLambertMaterial({color:0x23282e});
+    const glowMat=new THREE.MeshBasicMaterial({color:0xf2e6c4}); glowMat.toneMapped=false;
+    const gtex=deptGlassTex(); const glassMat=new THREE.MeshBasicMaterial({map:gtex,transparent:true,opacity:0.5,side:THREE.DoubleSide}); glassMat.toneMapped=false;
+    const x0=2*T, x1=(C.COLS-2)*T;
+    for(let xs=x0; xs<x1-1; xs+=T){ const xc=xs+T/2; if(blocked(xc)) continue;
+      const frame=new THREE.Mesh(new THREE.BoxGeometry(T*0.98,H+0.6,0.4), frameMat); frame.position.set(xc, base+H/2, z-face*0.28); worldRoot.add(frame);
+      const glow=new THREE.Mesh(new THREE.PlaneGeometry(T*0.72,H*0.9), glowMat); glow.position.set(xc, base+H/2, z-face*0.12); if(face<0) glow.rotation.y=Math.PI; worldRoot.add(glow);
+      const glass=new THREE.Mesh(new THREE.PlaneGeometry(T*0.8,H*0.8), glassMat); glass.position.set(xc, base+H*0.42, z); if(face<0) glass.rotation.y=Math.PI; worldRoot.add(glass);
+    }
+    // 看板＋庇は上部（出口ゲートと高さがかぶらない位置）にまとめて
+    const sg=new THREE.Mesh(new THREE.PlaneGeometry((C.COLS-6)*T, FH*0.34), new THREE.MeshBasicMaterial({map:buildingSignTex(side),side:THREE.DoubleSide}));
+    sg.material.toneMapped=false; sg.position.set(cx, base+H*0.9, z+face*0.06); if(face<0) sg.rotation.y=Math.PI; worldRoot.add(sg);
+    const can=new THREE.Mesh(new THREE.BoxGeometry((C.COLS-4)*T,0.3,T*0.85), new THREE.MeshLambertMaterial({color:0x2c3238}));
+    can.position.set(cx, base+H*0.78, z+face*(T*0.42)); worldRoot.add(can);
   }
   function buildB1Portals(){
     throughFront=collectMouthTiles(2,"front"); throughBack=collectMouthTiles(2,"back");
@@ -1450,13 +1455,16 @@ const CONFIG = {
   }
   function buildLineSigns(){
     const blank=new THREE.MeshLambertMaterial({color:0x10151b});
-    // 地下1階：各ホーム階段の上(B1側)に「○○線 ▼ホーム」サイン
+    // 各ホーム連結階段の「上の階(地上1階)側」に「○○線 ▼ホーム」サイン。階段の吹き抜け中央に吊り、壁にめり込まないよう細め
     for(const s of stairs){ if(s.lvl!==1 || s.lane==null) continue;
-      const ln=SHINJUKU_LINES[s.lane%SHINJUKU_LINES.length], w=tileToWorld(s.exit[0],s.exit[1]);
+      const ln=SHINJUKU_LINES[s.lane%SHINJUKU_LINES.length];
       const face=new THREE.MeshBasicMaterial({map:lineSignTex(ln,"ホーム▼","Platform")}); face.toneMapped=false;
-      const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.4,0.7,0.12), [blank,blank,blank,blank,face,face]);
-      sign.position.set(w.x, FH+2.2, w.z); worldRoot.add(sign);
-      const pole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), blank); pole.position.set(w.x, FH+2.55, w.z); worldRoot.add(pole);
+      const horiz=(s.axis==="x");                                   // 階段の向きに合わせてサインの面を通路へ
+      const geo=horiz? new THREE.BoxGeometry(0.12,0.66,T*0.86) : new THREE.BoxGeometry(T*0.86,0.66,0.12);
+      const faces=horiz? [face,face,blank,blank,blank,blank] : [blank,blank,blank,blank,face,face];
+      const sign=new THREE.Mesh(geo, faces);
+      sign.position.set(s.cx, FH+1.9, s.cz); worldRoot.add(sign);   // 吹き抜けの中央（開いた階段上）に吊る
+      const pole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), blank); pole.position.set(s.cx, FH+2.3, s.cz); worldRoot.add(pole);
     }
     // 地上：各出口の構内側に路線案内ボード（吊り下げ・両面）
     const dirFace=new THREE.MeshBasicMaterial({map:lineDirectoryTex(),side:THREE.DoubleSide}); dirFace.toneMapped=false;
