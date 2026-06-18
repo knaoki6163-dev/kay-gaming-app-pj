@@ -327,7 +327,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.118";
+  const APP_VERSION = "Ver.119";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -774,6 +774,27 @@ const CONFIG = {
         stairs.push(s);
       }
     });
+    // 小田急線：地上1階(level2)にもホームを作り、地下1階→地上1階→地上2階を直通でつなぐ階段を追加
+    oduHall=null;
+    const odaIdx=SHINJUKU_LINES.findIndex(l=>l.name==="小田急線");
+    if(odaIdx>=0 && odaIdx<LANES.length && NF>=3){
+      const [hx0,hx1]=LANES[odaIdx], tCols=[hx0-2,hx0-1];          // ホーム列(18,19)・左の線路列(16,17)
+      for(let y=PLAT_TOP;y<=PLAT_BOT;y++){
+        grids[2][y][hx0]=0; grids[2][y][hx1]=0;                    // ホール＝床
+        setWall(grids[2],tCols[0],y); setWall(grids[2],tCols[1],y);// 線路＝壁（電車を載せる）
+        usedW.add(hx0+","+y); usedW.add(hx1+","+y); usedR.add(tCols[0]+","+y); usedR.add(tCols[1]+","+y);
+      }
+      const sy0=PLAT_BOT-C.STAIR_LEN-2;                            // 直通階段はホール下寄り、中央列(hx1)
+      const su=makeStair("z", hx1, sy0, 2);
+      carveStairInto(su);
+      su.run.forEach(([x,y])=>{ const k=x+","+y; stairTileSet.add(k); stairTileLevel[k]=2; slabOmit[3].add(k); });
+      su.oneWay=0;
+      [...su.run,su.entry,su.exit,su.beyond].forEach(t=>usedW.add(t[0]+","+t[1]));
+      su.rails.forEach(t=>usedR.add(t[0]+","+t[1]));
+      placed.push({cxTile:su.cxTile,cyTile:su.cyTile});
+      stairs.push(su);
+      oduHall={x0:hx0,x1:hx1,tCols,lineIdx:odaIdx};
+    }
     // 地下1階→地上：ランダム
     for(let lvl=2; lvl<NF; lvl++){
       let n=0, att=0;
@@ -1034,6 +1055,7 @@ const CONFIG = {
   }
   let boarders=[]; // 開いたドアから乗降する人
   let platObstacles=[]; // 地下2階の中央の柱/売店/看板/ゴミ箱（小さい円の当たり判定）
+  let oduHall=null;     // 小田急線の地上1階ホーム（描画用：ホーム列・線路列・路線index）
   let groundKiosks=[];  // 地上の売店（円の当たり判定＋来客の目的地）
   let kioskFields={};   // 各売店への経路場
   let exitField=null;   // 地上の全出口へ向かう経路場（出入りを激しくする用）
@@ -1260,6 +1282,33 @@ const CONFIG = {
     else wanderStep(p, dt);
   }
 
+  // 小田急線の地上1階(level2)ホーム＋電車を描画（地下1階の小田急線の真上）
+  function buildOdakyuUpper(){
+    if(!oduHall) return;
+    const base=FH;                                            // 地上1階の床の高さ
+    const ln=SHINJUKU_LINES[oduHall.lineIdx], [t0,t1]=oduHall.tCols;
+    const xc=(t0+t1+1)/2*T, carW=(t1-t0+1)*T*0.6, carH=FH*0.7, by0=base+0.5;
+    const z0=PLAT_TOP*T, z1=(PLAT_BOT+1)*T, total=(z1-z0)*0.96, NCARS=4, gap=0.5, carLen=total/NCARS-gap;
+    const stripe="#"+ln.col.toString(16).padStart(6,"0");
+    const side=new THREE.MeshLambertMaterial({map:makeTrainSideTex(stripe)});
+    const endMat=new THREE.MeshLambertMaterial({color:0xe2e7ec}), roofMat=new THREE.MeshLambertMaterial({color:0xbac1c7}), underMat=new THREE.MeshLambertMaterial({color:0x20252a});
+    for(let c=0;c<NCARS;c++){
+      const cz0=z0+c*(total/NCARS)+gap/2, czc=cz0+carLen/2;
+      const body=new THREE.Mesh(new THREE.BoxGeometry(carW,carH,carLen),[side,side,endMat,endMat,endMat,endMat]); body.position.set(xc,by0+carH/2,czc); worldRoot.add(body);
+      const under=new THREE.Mesh(new THREE.BoxGeometry(carW*0.9,0.6,carLen*0.98),underMat); under.position.set(xc,base+0.3,czc); worldRoot.add(under);
+      const roof=new THREE.Mesh(new THREE.BoxGeometry(carW*0.86,0.3,carLen*0.99),roofMat); roof.position.set(xc,by0+carH+0.1,czc); worldRoot.add(roof);
+    }
+    // ホーム端の黄色い縁（電車側）
+    const yl=new THREE.Mesh(new THREE.PlaneGeometry(T*0.5,z1-z0), new THREE.MeshBasicMaterial({color:0xf2c200})); yl.material.toneMapped=false;
+    yl.rotation.x=-Math.PI/2; yl.position.set(oduHall.x0*T+T*0.15, base+0.06, (z0+z1)/2); worldRoot.add(yl);
+    // 小田急線サイン（吊り下げ・両面）
+    const blank=new THREE.MeshLambertMaterial({color:0x10151b});
+    const face=new THREE.MeshBasicMaterial({map:lineSignTex(ln,"ホーム","Platform")}); face.toneMapped=false;
+    for(const zf of [0.3,0.7]){ const zz=(PLAT_TOP+(PLAT_BOT-PLAT_TOP)*zf)*T;
+      const sign=new THREE.Mesh(new THREE.BoxGeometry(T*1.4,0.7,0.12),[blank,blank,blank,blank,face,face]);
+      sign.position.set((oduHall.x0+1)*T, base+FH*0.72, zz); worldRoot.add(sign);
+      const pole=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), blank); pole.position.set((oduHall.x0+1)*T, base+FH*0.72+0.6, zz); worldRoot.add(pole); }
+  }
   // 地下2階の描画：中央の柱/売店/看板/ゴミ箱（小さい当たり判定）、線路の電車、境界壁
   function buildPlatform(){
     platObstacles=[];
@@ -1468,12 +1517,14 @@ const CONFIG = {
       for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
         if(grids[f][y][x]===1){
           if(skip[f].has(x+","+y)) continue;
+          if(f===2 && oduHall && (x===oduHall.tCols[0]||x===oduHall.tCols[1]) && y>=PLAT_TOP && y<=PLAT_BOT) continue; // 小田急線の線路は電車で描画
           const w=tileToWorld(x,y), wh=FH+(f===NF?GHX:0);   // 地上は壁も高く
           const seg=new THREE.Mesh(f===NF?wallSegGeoTall:wallSegGeo,wallMat); seg.position.set(w.x,(f-1)*FH+wh/2,w.z); worldRoot.add(seg);
         }
       }
     }
     buildPlatform();   // 地下2階＝プラットホーム
+    buildOdakyuUpper();// 小田急線の地上1階ホーム＋電車
     buildLineSigns();  // 路線案内サイン（地下1階の各ホーム階段／地上の各出口）
 
     // 階段（段々のステップ＋横の手すり。ライトは付けない）
