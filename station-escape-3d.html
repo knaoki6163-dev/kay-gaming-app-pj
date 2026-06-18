@@ -71,6 +71,11 @@
   #cwTL{ top:0; left:0;     background:radial-gradient(ellipse at top left,     rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
   #cwBR{ bottom:0; right:0; background:radial-gradient(ellipse at bottom right, rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
   #cwBL{ bottom:0; left:0;  background:radial-gradient(ellipse at bottom left,  rgba(235,0,0,0.95), rgba(235,0,0,0) 72%); }
+  /* ダッシュ中の疾走感：画面左右の端に薄い白の横線 */
+  #speedL,#speedR{ position:fixed; top:0; bottom:0; width:24%; z-index:8; pointer-events:none; opacity:0;
+    background:repeating-linear-gradient(0deg, rgba(255,255,255,0) 0 7px, rgba(255,255,255,0.5) 7px 9px); }
+  #speedL{ left:0;  -webkit-mask-image:linear-gradient(to right, #000, transparent); mask-image:linear-gradient(to right, #000, transparent); }
+  #speedR{ right:0; -webkit-mask-image:linear-gradient(to left,  #000, transparent); mask-image:linear-gradient(to left,  #000, transparent); }
   /* トイレが漏れる直前の黄色い警告（画面周囲）＋カウント */
   #toiletwarn { position:fixed; inset:0; z-index:9; pointer-events:none; opacity:0;
     box-shadow: inset 0 0 130px 50px rgba(240,205,30,0.85); }
@@ -227,6 +232,7 @@ const CONFIG = {
 <div id="mapLabel" class="hidden">MAP</div>
 <div id="alert"></div>
 <div id="cwTR"></div><div id="cwTL"></div><div id="cwBR"></div><div id="cwBL"></div>
+<div id="speedL"></div><div id="speedR"></div>
 <div id="toiletwarn"></div>
 <div id="toiletcount"></div>
 <div id="cross" class="hidden"></div>
@@ -317,10 +323,11 @@ const CONFIG = {
   const alertEl = document.getElementById("alert");
   const cwEls = { TR:document.getElementById("cwTR"), TL:document.getElementById("cwTL"), BR:document.getElementById("cwBR"), BL:document.getElementById("cwBL") };
   const toiletWarnEl = document.getElementById("toiletwarn"), toiletCountEl = document.getElementById("toiletcount");
+  const speedLEl = document.getElementById("speedL"), speedREl = document.getElementById("speedR");
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.116";
+  const APP_VERSION = "Ver.117";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1925,6 +1932,7 @@ const CONFIG = {
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
   const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, stepNext=0.2, alertPrev=false, crouching=false, wMash=0, lostT=0;
   let dashBursting=false, dashBurstSpeed=8.0, dashBurstLeft=0, dashRecT=20, dashGrace=0;   // ダッシュ・スタミナ（実行中バースト＋直近終了からの回復計時）
+  let isDashing=false;   // いまダッシュ中か（疾走感の白線表示用）
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
     if(k==="m" && !userMode) setMapCollapsed(!mapCollapsed);   // Mでマップ開閉（ユーザープレイ時は無効）
@@ -1990,8 +1998,8 @@ const CONFIG = {
     startScreen.classList.add("hidden"); resultScreen.classList.add("hidden");
     running=true; if(!isTouch) requestLock();
   }
-  function pauseToStart(){ if(!running)return; running=false;
-    toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none";   // 一時停止中にトイレ警告を残さない
+  function pauseToStart(){ if(!running)return; running=false; isDashing=false; speedLEl.style.opacity=0; speedREl.style.opacity=0;
+    toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none";   // 一時停止中にトイレ警告/疾走線を残さない
     startScreen.querySelector("h1").textContent="一時停止中"; startScreen.classList.remove("hidden"); }
   const RANKS=["S","A","B","C","D","E","F"];
   const RANK_COLORS=["#ffd23a","#ff6a3a","#4ab0e2","#5fd36a","#b0b6bd","#7a8088","#565b62"];
@@ -2024,7 +2032,7 @@ const CONFIG = {
       resultInfo.innerHTML = tr('resTime', fmtTime(gameTime));
     }
     resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden"); dashEl.classList.add("hidden"); missionEl.classList.add("hidden");
-    toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none";   // トイレ警告を消す
+    toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none"; isDashing=false; speedLEl.style.opacity=0; speedREl.style.opacity=0;   // トイレ警告・疾走線を消す
     if(cleared) sfxClear(); else sfxOver(); }
 
   function beginOrResume(asUser){
@@ -2076,7 +2084,7 @@ const CONFIG = {
         else if(dashRecT>=C.DASH_PARTIAL_AT){ dashBursting=true; dashBurstSpeed=C.DASH_PARTIAL_SPEED; dashBurstLeft=C.DASH_PARTIAL_DUR-dt; dashGrace=0; dashAvail=C.DASH_PARTIAL_SPEED; }
       }
     }
-    const dashing = wantDash && dashAvail>0;
+    const dashing = wantDash && dashAvail>0; isDashing=dashing;
     let spd;
     if(crouching) spd=C.CROUCH_SPEED;
     else if(carrying){
@@ -2849,6 +2857,9 @@ const CONFIG = {
       else if(dashRecT>=C.DASH_PARTIAL_AT){ dfrac=1; dcol="#f0a93a"; dtxt=tr('dashReadyWeak',Math.ceil(C.DASH_FULL_AT-dashRecT)); }  // 弱ダッシュ使用可（通常まで）
       else { dfrac=dashRecT/C.DASH_PARTIAL_AT; dcol="#7a8088"; dtxt=tr('dashCoolWeak',Math.ceil(C.DASH_PARTIAL_AT-dashRecT)); }       // 回復中（弱まで）
       dashFillEl.style.width=(Math.max(0,Math.min(1,dfrac))*100)+"%"; dashFillEl.style.background=dcol; dashTxtEl.textContent=dtxt;
+      // ダッシュ中は画面左右に薄い白線で疾走感
+      const sp = isDashing ? (0.55+0.25*Math.abs(Math.sin(flick*22))) : 0;
+      speedLEl.style.opacity=sp; speedREl.style.opacity=sp;
       // トイレが漏れる(GAME OVER)直前：10秒前から黄色い枠、3秒前からカウント表示
       const toiletLeft = (carrying && drunk && drunk.toiletStop<=0 && toiletState==="urge") ? toiletT : Infinity;
       if(toiletLeft<=C.TOILET_CRITICAL){
