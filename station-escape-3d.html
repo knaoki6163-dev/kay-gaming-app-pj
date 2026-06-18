@@ -329,7 +329,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.121";
+  const APP_VERSION = "Ver.122";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2709,7 +2709,7 @@ const CONFIG = {
         if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<minSep)) continue;   // 近すぎる重複は避ける
         worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));
         // 青い円柱＝恒久的なトイレ目印。壁際（埋め込み）に常時表示
-        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,FH*0.82,10), new THREE.MeshBasicMaterial({color:0x2a9bff,transparent:true,opacity:0.6}));
+        const beacon=new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,FH*0.82,14), new THREE.MeshBasicMaterial({color:0x2a9bff,transparent:true,opacity:0.5}));
         beacon.material.toneMapped=false; beacon.position.set(w.x-c.dx*T*0.38, (f-1)*FH+FH*0.43, w.z-c.dy*T*0.38); worldRoot.add(beacon);
         toilets.push({x:w.x,z:w.z,level:f,beacon}); made++;
       }
