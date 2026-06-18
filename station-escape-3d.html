@@ -320,7 +320,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.114";
+  const APP_VERSION = "Ver.115";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -348,10 +348,10 @@ const CONFIG = {
     mapOpen:{ ja:'🗺 マップを開く（M）', en:'🗺 Open map (M)' },
     mapClose:{ ja:'🗺 たたむ（M）', en:'🗺 Collapse (M)' },
     here:{ ja:f=>'現在地: '+f, en:f=>'Floor: '+f },
-    goalInit:{ ja:(ln,n)=>'▶ 地下1階の【'+ln+'】ホームの酔っ払いを'+n+'番出口へ連れ戻せ', en:(ln,n)=>'▶ Bring the drunk from the B1 '+ln+' platform to Exit '+n },
+    goalInit:{ ja:(ln,fl,n)=>'▶ 地下1階の【'+ln+'】ホームの酔っ払いを'+fl+'の'+n+'番出口へ連れ戻せ', en:(ln,fl,n)=>'▶ Bring the drunk from the B1 '+ln+' platform to Exit '+n+' ('+fl+')' },
     goalFind:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームの酔っ払いを探せ（黄色い光の柱）', en:ln=>'▶ Find the drunk on the B1 '+ln+' platform (yellow light)' },
     goalFetch:{ ja:f=>'▶ '+f+'にいる酔っ払いを連れに行け（黄色い光の柱）', en:f=>'▶ Go get the drunk on '+f+' (yellow light)' },
-    goalDeliver:{ ja:n=>'▶ '+n+'番出口へ酔っ払いを連れ戻せ', en:n=>'▶ Carry the drunk to Exit '+n },
+    goalDeliver:{ ja:(fl,n)=>'▶ '+fl+'の'+n+'番出口（改札）を通って外へ連れ出せ', en:(fl,n)=>'▶ Take the drunk out through Exit '+n+' ('+fl+')' },
     subSafe:{ ja:s=>'🛡 安全（敵探知なし）あと'+s+'秒　/　', en:s=>'🛡 Safe (no detection) '+s+'s　/　' },
     subEnemy:{ ja:(st,cr)=>'敵: '+st+cr+'　/　', en:(st,cr)=>'Enemy: '+st+cr+'　/　' },
     enChase:{ ja:'追跡中！', en:'CHASING!' }, enWander:{ ja:'徘徊', en:'Patrol' },
@@ -826,8 +826,16 @@ const CONFIG = {
   function isStairTileAt(x,z){ return stairTileSet.has(Math.floor(x/T)+","+Math.floor(z/T)); }
   // 歩行者は階段を避ける
   function canStandPed(x,z,r,f){
+    if(inExitPlaza(x,z,f)) return true;   // 改札の外の広場は歩ける
     if(!canStand(x,z,r,f)) return false;
     return !(isStairTileAt(x-r,z-r)||isStairTileAt(x+r,z-r)||isStairTileAt(x-r,z+r)||isStairTileAt(x+r,z+r));
+  }
+  // 改札の外の広場（出入り可能な外のスペース）に居るか。居ればその出口を返す
+  function inExitPlaza(x,z,f){
+    if(x>2*T && x<(C.COLS-2)*T && z>2*T && z<(C.ROWS-2)*T) return null;   // 内側は広場なし＝高速化
+    for(const e of exits){ const p=e.plaza; if(!p || p.level!==f) continue;
+      if(x>=p.minX && x<=p.maxX && z>=p.minZ && z<=p.maxZ) return e; }
+    return null;
   }
   function allFloorTiles(f){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grids[f][y][x]===0)a.push({x,y}); return a; }
 
@@ -1433,9 +1441,9 @@ const CONFIG = {
       }}
     }
 
-    // 出口を先に決める（最上階・外周）→ 開口する最上段の壁を記録＋幅広出口はgridsを掘る
-    const topSkip=new Set();
-    placeExits(topSkip);
+    // 出口を先に決める（方角で地上1階/地上2階に振り分け・外周）→ 開口する壁をフロアごとに記録＋gridsを掘る
+    const skip={}; for(let f=2;f<=NF;f++) skip[f]=new Set();
+    placeExits(skip);
 
     // 各階の床スラブ（出口の開口後に作る。階段マスは抜く＝吹き抜け）
     for(let f=2;f<=NF;f++){
@@ -1452,7 +1460,7 @@ const CONFIG = {
     for(let f=2;f<=NF;f++){
       for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
         if(grids[f][y][x]===1){
-          if(f===NF && topSkip.has(x+","+y)) continue;
+          if(skip[f].has(x+","+y)) continue;
           const w=tileToWorld(x,y), wh=FH+(f===NF?GHX:0);   // 地上は壁も高く
           const seg=new THREE.Mesh(f===NF?wallSegGeoTall:wallSegGeo,wallMat); seg.position.set(w.x,(f-1)*FH+wh/2,w.z); worldRoot.add(seg);
         }
@@ -1524,8 +1532,9 @@ const CONFIG = {
       worldRoot.add(buildKiosk(k.x, (NF-1)*FH, k.z));
     }
     computeObsBlock();   // 売店などのタイルを記録（敵の巡回経路が避ける）
-    // 地上の全出口へ向かう経路場（外周の出入りを激しくする。売店は避ける）
-    exitField = exits.length ? bfsField(NF, exits.map(e=>[e.tx,e.ty]), obsBlock[NF]) : null;
+    // 最上階(地上2階)の出口へ向かう経路場（外周の出入りを激しくする。売店は避ける）
+    const nfExits = exits.filter(e=>e.level===NF);
+    exitField = nfExits.length ? bfsField(NF, nfExits.map(e=>[e.tx,e.ty]), obsBlock[NF]) : null;
     buildUpFields(); placeGuideSigns();   // 案内看板（一部は偽物）を設置
 
     // 歩行者（各階に分散。地上フロアは GROUND_PED_MULT 倍に）
@@ -1538,8 +1547,8 @@ const CONFIG = {
     for(let f=1;f<=NF;f++) pedTargets[f]=(f===NF)?basePer*C.GROUND_PED_MULT:(f===1?basePer*C.B2_PED_MULT:basePer*C.B1_PED_MULT);
     baseB2Target=pedTargets[1]; baseB1Target=pedTargets[2]; baseGroundTarget=pedTargets[NF];
     crowdPhase="idle"; crowdT=0; crowdTimer=C.TRAIN_INTERVAL*0.6;   // 電車到着の人混み用
-    // 各フロアの「人の出入り口」(人数調節に使う): 地上=出口, 地下1階=デパート, 地下2階=電車ドア
-    sourcePts={ [NF]: exits.map(e=>({x:e.sx,z:e.sz})), 2: deptDoors.slice(), 1: trainDoors.slice() };
+    // 各フロアの「人の出入り口」(人数調節に使う): 地上2階=出口, 地上1階=デパート＋出口, 地下1階=電車ドア
+    sourcePts={ [NF]: nfExits.map(e=>({x:e.sx,z:e.sz})), 2: deptDoors.concat(exits.filter(e=>e.level===2).map(e=>({x:e.sx,z:e.sz}))), 1: trainDoors.slice() };
     buildFlowFields();   // フロア間移動の経路場（行き止まりに詰まらない誘導）
     let pi=0;
     for(let f=1;f<=NF;f++){
@@ -1569,15 +1578,28 @@ const CONFIG = {
     else { p.kind="W"; p.goal=0; p.trip=-1; }
   }
   // 出口へ向かい、着いたら別の出口から入り直す＝外周の出入りを激しく見せる
+  function plazaPoint(e){ const p=e.plaza;
+    let x=p.minX+Math.random()*(p.maxX-p.minX), z=p.minZ+Math.random()*(p.maxZ-p.minZ);
+    if(e.ox>0) x=p.minX+(p.maxX-p.minX)*(0.5+Math.random()*0.5); else if(e.ox<0) x=p.minX+(p.maxX-p.minX)*Math.random()*0.5;
+    if(e.oy>0) z=p.minZ+(p.maxZ-p.minZ)*(0.5+Math.random()*0.5); else if(e.oy<0) z=p.minZ+(p.maxZ-p.minZ)*Math.random()*0.5;
+    return {x,z};
+  }
   function exitStep(p, dt){
+    if(p.inPlaza){                                   // 改札の外（広場）で少しウロウロ→駅内へ戻る
+      p.plazaT-=dt;
+      if(p.plazaT<=0){ const e=exits[(Math.random()*exits.length)|0];
+        p.x=e.sx+(Math.random()-0.5)*T*0.4; p.z=e.sz+(Math.random()-0.5)*T*0.4; p.level=e.level; p.y=(e.level-1)*FH;
+        p.inPlaza=false; p.kind="W"; p.trip=-1; p.roleT=3+Math.random()*5; return; }
+      wanderStep(p, dt); return;
+    }
     if(!exitField || !exits.length){ p.kind="W"; wanderStep(p,dt); return; }
     const tx=Math.floor(p.x/T), ty=Math.floor(p.z/T);
     if(tx<0||ty<0||tx>=C.COLS||ty>=C.ROWS){ wanderStep(p,dt); return; }
     const d=exitField.dist[ty][tx];
-    if(d>=0 && d<=1){   // 出口に到着→外へ出て、別の出口から入り直す
-      const e=exits[(Math.random()*exits.length)|0];
-      p.x=e.sx+(Math.random()-0.5)*T*0.4; p.z=e.sz+(Math.random()-0.5)*T*0.4;
-      p.kind="W"; p.trip=-1; p.roleT=3+Math.random()*5; return;
+    if(d>=0 && d<=1){   // 出口に到着→改札を通って外（広場）へ出る
+      let best=null,bd=1e9; for(const e of exits){ if(e.level!==NF||!e.plaza) continue; const dd=(e.x-p.x)**2+(e.z-p.z)**2; if(dd<bd){bd=dd;best=e;} }
+      if(best){ const pt=plazaPoint(best); p.x=pt.x; p.z=pt.z; p.inPlaza=true; p.plazaT=1.2+Math.random()*1.8; return; }
+      const e=exits[(Math.random()*exits.length)|0]; p.x=e.sx; p.z=e.sz; p.level=e.level; p.kind="W"; p.trip=-1; p.roleT=3+Math.random()*5; return;
     }
     if(exitField.step[ty][tx]>=0){ const dd=DIRS4[exitField.step[ty][tx]], tw=tileToWorld(tx+dd[0],ty+dd[1]); pedMoveDir(p, tw.x-p.x, tw.z-p.z, dt, false); }
     else wanderStep(p, dt);
@@ -1804,20 +1826,25 @@ const CONFIG = {
   }
 
   // 出口（最上階・外周）
-  function placeExits(topSkip){
-    const topBase=(NF-1)*FH;
+  // 出口（外周）。方角で階を振り分け：南・南西・南東＝地上2階(最上階NF)、それ以外＝地上1階(level2)
+  function placeExits(skip){
+    const cx=(C.COLS-1)/2, cy=(C.ROWS-1)/2;
+    const exitFloorOf=(tx,ty)=>{ const ang=Math.atan2(tx-cx, -(ty-cy))*180/Math.PI;  // 0=北,+東,±180=南,-西
+      return (Math.abs(ang)>=112.5) ? NF : 2; };                                       // 南グループ=地上2階, それ以外=地上1階
     const cand=[];
-    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
-      if(grids[NF][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
-      let ox=0,oy=0,bx=0,by=0;
-      if(x===1){ox=-1;bx=0;by=y;} else if(x===C.COLS-2){ox=1;bx=C.COLS-1;by=y;}
-      else if(y===1){oy=-1;bx=x;by=0;} else if(y===C.ROWS-2){oy=1;bx=x;by=C.ROWS-1;}
-      else continue;
-      cand.push({tx:x,ty:y,ox,oy,bx,by});
+    for(const f of [2,NF]){
+      for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+        if(grids[f][y][x]!==0 || stairTileSet.has(x+","+y)) continue;
+        let ox=0,oy=0,bx=0,by=0;
+        if(x===1){ox=-1;bx=0;by=y;} else if(x===C.COLS-2){ox=1;bx=C.COLS-1;by=y;}
+        else if(y===1){oy=-1;bx=x;by=0;} else if(y===C.ROWS-2){oy=1;bx=x;by=C.ROWS-1;}
+        else continue;
+        if(exitFloorOf(x,y)!==f) continue;            // その方角を担当するフロアの外周のみ候補に
+        cand.push({tx:x,ty:y,ox,oy,bx,by,f});
+      }
     }
     shuffle(cand);
     const chosen=[];
-    // 間隔をあけて選ぶ。目標数に届かなければ間隔を詰めて追加（14個を必ず確保）
     for(let gap=4; gap>=1 && chosen.length<C.EXIT_COUNT; gap--){
       for(const c of cand){
         if(chosen.length>=C.EXIT_COUNT) break;
@@ -1826,13 +1853,12 @@ const CONFIG = {
         chosen.push(c);
       }
     }
-    // 番号を外周(時計回り)順に並べる＝1,2,3,..が順に並ぶ
     const perimIdx=c=> c.oy<0 ? c.tx : (c.ox>0 ? C.COLS+c.ty : (c.oy>0 ? C.COLS+C.ROWS+(C.COLS-c.tx) : 2*C.COLS+C.ROWS+(C.ROWS-c.ty)));
     chosen.sort((a,b)=>perimIdx(a)-perimIdx(b));
     chosen.forEach((c,idx)=>{
-      const no=idx+1;
-      const wide=(no===3||no===5);          // 3番・5番は横幅5倍の改札出口
-      const mid=(no===8);                   // 8番は「少し大きめ」(3マス幅)
+      const no=idx+1, ef=c.f, base=(ef-1)*FH;
+      const wide=(no===3||no===5);          // 横幅5倍の改札出口
+      const mid=(no===8);                   // 少し大きめ(3マス幅)
       const half=wide?2:(mid?1:0);
       const perpx=(c.ox===0)?1:0, perpy=(c.oy===0)?1:0;
       const w=tileToWorld(c.tx,c.ty);
@@ -1840,40 +1866,44 @@ const CONFIG = {
       const signTex=new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide});
       for(let k=-half;k<=half;k++){
         const bx=c.bx+k*perpx, by=c.by+k*perpy;
-        if(bx>=0&&by>=0&&bx<C.COLS&&by<C.ROWS) topSkip.add(bx+","+by); // 壁を開口
+        if(bx>=0&&by>=0&&bx<C.COLS&&by<C.ROWS){ skip[ef].add(bx+","+by); grids[ef][by][bx]=0; } // 壁を開口＝床にして通り抜け可能に
         if(wide||mid){
           const ix=c.tx+k*perpx, iy=c.ty+k*perpy;
-          if(inInner(ix,iy)&&!stairTileSet.has(ix+","+iy)) grids[NF][iy][ix]=0;
+          if(inInner(ix,iy)&&!stairTileSet.has(ix+","+iy)) grids[ef][iy][ix]=0;
           const jx=ix-c.ox, jy=iy-c.oy;     // 一つ内側も開けて改札前の広場に
-          if(inInner(jx,jy)&&!stairTileSet.has(jx+","+jy)) grids[NF][jy][jx]=0;
+          if(inInner(jx,jy)&&!stairTileSet.has(jx+","+jy)) grids[ef][jy][jx]=0;
         }
       }
-      // ① ドアの真上に大きな出口番号サイン（構内側を向く＝必ず見える）
-      const ph1=topBase+FH*0.78, sw=wide?T*1.8:(mid?T*1.3:T*0.9);
+      const ph1=base+FH*0.78, sw=wide?T*1.8:(mid?T*1.3:T*0.9);
       const sign1=new THREE.Mesh(new THREE.PlaneGeometry(sw,T*0.7), signTex);
       sign1.position.set(mx-c.ox*0.15, ph1, mz-c.oy*0.15); sign1.lookAt(w.x, ph1, w.z); worldRoot.add(sign1);
-      // ② 横に縦長サイン＋ポール
-      const leftx=c.oy, leftz=-c.ox, ph2=topBase+1.7, sideOff=wide?T*2.4:(mid?T*1.3:T*0.7);
-      const sx=mx + c.ox*T*0.45 + leftx*sideOff, sz=mz + c.oy*T*0.45 + leftz*sideOff;
+      const leftx=c.oy, leftz=-c.ox, ph2=base+1.7, sideOff=wide?T*2.4:(mid?T*1.3:T*0.7);
+      const sxp=mx + c.ox*T*0.45 + leftx*sideOff, szp=mz + c.oy*T*0.45 + leftz*sideOff;
       const sign2=new THREE.Mesh(new THREE.PlaneGeometry(T*0.34,T*0.7), signTex);
-      sign2.position.set(sx, ph2, sz); sign2.lookAt(w.x, ph2, w.z); worldRoot.add(sign2);
-      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-topBase, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
-      post.position.set(sx, topBase+(ph2-topBase)/2, sz); worldRoot.add(post);
-      // 出口の外は地上の広場（フラット。広い改札は幅広）
-      buildOutsidePlaza(mx,mz,c.ox,c.oy,topBase, wide?T*4.6:(mid?T*2.2:T*0.85));
-      // 改札ゲートの柱（広い出口のみ）
-      if(wide){
-        const gateMat=new THREE.MeshLambertMaterial({color:0x4a5560});
-        for(let k=-2;k<=3;k++){
-          const gx=mx+perpx*(k-0.5)*T, gz=mz+perpy*(k-0.5)*T;
-          const gate=new THREE.Mesh(new THREE.BoxGeometry(0.45,1.3,0.9), gateMat);
-          gate.position.set(gx - c.ox*0.6, topBase+0.65, gz - c.oy*0.6); worldRoot.add(gate);
-        }
+      sign2.position.set(sxp, ph2, szp); sign2.lookAt(w.x, ph2, w.z); worldRoot.add(sign2);
+      const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-base, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
+      post.position.set(sxp, base+(ph2-base)/2, szp); worldRoot.add(post);
+      buildOutsidePlaza(mx,mz,c.ox,c.oy,base, wide?T*4.6:(mid?T*2.2:T*0.85));   // 出口の外＝広場
+      // 改札（ターンスタイル）：開口幅に改札機を並べる。間のレーンを通って外（広場）へ＝クリア
+      const lanes=2*half+1, gateMat=new THREE.MeshLambertMaterial({color:0x42505c});
+      const gleam=new THREE.MeshBasicMaterial({color:0x16c0b0}); gleam.toneMapped=false;
+      for(let k=0;k<=lanes;k++){
+        const off=(k-lanes/2)*T, gx=mx+perpx*off, gz=mz+perpy*off;
+        const gm=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.5:1.5,1.05,perpy?0.5:1.5), gateMat);
+        gm.position.set(gx, base+0.55, gz); worldRoot.add(gm);
+        const bar=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.55:0.18,0.12,perpy?0.55:0.18), gleam);
+        bar.position.set(gx, base+1.05, gz); worldRoot.add(bar);
       }
+      // 通り抜け可能な広場の範囲（プレイヤー・通行人が出入りできる外のスペース）
+      const owid=lanes*T, dep=T*3.0;
+      let plaza;
+      if(c.ox!==0){ const a0=mx - c.ox*T*0.6, a1=mx + c.ox*dep;
+        plaza={minX:Math.min(a0,a1), maxX:Math.max(a0,a1), minZ:w.z-owid/2, maxZ:w.z+owid/2, level:ef}; }
+      else { const a0=mz - c.oy*T*0.6, a1=mz + c.oy*dep;
+        plaza={minX:w.x-owid/2, maxX:w.x+owid/2, minZ:Math.min(a0,a1), maxZ:Math.max(a0,a1), level:ef}; }
       const inner=tileToWorld(c.tx,c.ty);   // 出口の構内側の床（人の出入り口）
-      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, sx:inner.x, sz:inner.z, level:NF, wide, mid});
+      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, sx:inner.x, sz:inner.z, level:ef, wide, mid, plaza, ox:c.ox, oy:c.oy});
     });
-    // 正解の出口は毎回ランダム（固定シードのRNGではなくMath.randomを使う）
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
       ? C.CORRECT_EXIT : (exits.length?exits[(Math.random()*exits.length)|0].no:1);
   }
@@ -1944,9 +1974,10 @@ const CONFIG = {
     buildWorld();                   // exits / correctExitNo / 路線サイン はここで確定
     // プレイヤーは「地上の指定出口」からスタート（そこから地下へ降りて酔っ払いを探し、ここへ連れ戻す）
     const startExit = exits.find(e=>e.no===correctExitNo) || exits[0];
-    player.x=startExit.sx; player.z=startExit.sz; player.y=(NF-1)*FH; player.yaw=0; player.pitch=0; player.level=NF; player.plevel=NF;
-    buildDrunkAndKonbini(player.x, player.z, NF);   // 酔っ払い（各ホーム）＆コンビニを配置
-    goalEl.textContent=tr('goalInit', lineName(targetLane), correctExitNo);
+    const sLvl = startExit.level || NF;
+    player.x=startExit.sx; player.z=startExit.sz; player.y=(sLvl-1)*FH; player.yaw=0; player.pitch=0; player.level=sLvl; player.plevel=sLvl;
+    buildDrunkAndKonbini(player.x, player.z, sLvl);   // 酔っ払い（各ホーム）＆コンビニを配置
+    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(sLvl), correctExitNo);
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.remove("hidden");
@@ -2011,6 +2042,7 @@ const CONFIG = {
   // ---------- 移動 ----------
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
+    if(inExitPlaza(x,z,player.level)) return true;          // 改札の外の広場へ通り抜け可能
     // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
     if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
@@ -2713,11 +2745,14 @@ const CONFIG = {
     if(gameTime>=C.START_GRACE) for(const chaser of chasers){   // 開始直後の猶予中は捕まらない
       if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
     }
-    if(player.level===NF){
-      for(const e of exits){ if(Math.hypot(player.x-e.x,player.z-e.z)<(e.wide?T*2.6:(e.mid?T*1.3:T*0.6)) && e.no===correctExitNo){
+    // 改札を通って外（広場）へ出たらクリア＝正解の出口で、改札(壁面)より外側に出たか
+    const pe=inExitPlaza(player.x, player.z, player.level);
+    if(pe && pe.no===correctExitNo){
+      const outward=(player.x-pe.x)*pe.ox + (player.z-pe.z)*pe.oy;   // 改札より外（プラス）か
+      if(outward>T*0.4){
         if(carrying){ endGame(true); return; }
-        else { if(drunkMsgT<=0) setDrunkMsg("msgBring",1.5); return; }
-      } }
+        else if(drunkMsgT<=0){ setDrunkMsg("msgBring",1.5); }
+      }
     }
   }
   let flick=0;
@@ -2735,14 +2770,12 @@ const CONFIG = {
       mapCtx.fillStyle = g[y][x]===1 ? "#5b626b" : (up?"#e8a23a":(down?"#5a9bd6":"#eef1f4"));
       mapCtx.fillRect(x*cs,y*cs,cs,cs);
     }
-    // 出口は最上階にいるときだけ表示（番号は大きめ）
-    if(F===NF){
-      for(const e of exits){ const px=(e.x/T)*cs, py=(e.z/T)*cs;
-        mapCtx.fillStyle=(e.no===correctExitNo)?"#f5b50a":"#2ecf6b";
-        mapCtx.fillRect(px-cs*0.6,py-cs*0.6,cs*1.2,cs*1.2);
-        mapCtx.fillStyle="#0c2a16"; mapCtx.font="bold "+Math.round(cs*1.7)+"px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
-        mapCtx.fillText(String(e.no),px,py);
-      }
+    // 出口は「いまのフロアにある出口」だけ表示（番号は大きめ）
+    for(const e of exits){ if(e.level!==F) continue; const px=(e.x/T)*cs, py=(e.z/T)*cs;
+      mapCtx.fillStyle=(e.no===correctExitNo)?"#f5b50a":"#2ecf6b";
+      mapCtx.fillRect(px-cs*0.6,py-cs*0.6,cs*1.2,cs*1.2);
+      mapCtx.fillStyle="#0c2a16"; mapCtx.font="bold "+Math.round(cs*1.7)+"px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
+      mapCtx.fillText(String(e.no),px,py);
     }
     // 現在フロアの歩行者・敵だけ表示
     mapCtx.fillStyle="#9aa1aa";
@@ -2797,7 +2830,7 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=tr(drunkMsg);
-      else if(carrying) goalEl.textContent = tr('goalDeliver',correctExitNo);
+      else if(carrying){ const ce=exits.find(e=>e.no===correctExitNo); goalEl.textContent = tr('goalDeliver', floorName(ce?ce.level:NF), correctExitNo); }
       else if(drunk && drunk.level!==1) goalEl.textContent = tr('goalFetch', floorName(drunk.level));   // 手放した後＝酔っ払いの現在フロアを指す
       else goalEl.textContent = tr('goalFind', lineName(targetLane));
       carryEl.classList.toggle("hidden", !carrying);            // 連れている＝緑
