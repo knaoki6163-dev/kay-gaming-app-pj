@@ -173,6 +173,7 @@ const CONFIG = {
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
   CATCH_FOV: 62,        // 捕まえるのはプレイヤーの正面±この角度(度)に敵が居る時だけ（画面に映る範囲）。背後からは捕まえず正面へ回り込む
+  CATCH_GRAB_TIME: 3.0, // 密着(CATCH_DIST内)がこの秒数続いたら、正面でなくても掴む（視点クルクル回避の悪用防止）
   CHASER_FLOOR_TIME: 22,// 敵が1フロアを巡回し続ける時間(秒)。これを過ぎると別フロアへ入れ替わる
   START_GRACE: 10,      // スタートから この秒数は敵に探知されない（猶予）
 
@@ -329,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.123";
+  const APP_VERSION = "Ver.124";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -385,6 +386,7 @@ const CONFIG = {
     msgPicked:{ ja:'酔っ払いを連れた！地上の正しい出口へ送り届けろ', en:'Got the drunk! Deliver him to the correct ground exit' },
     msgKonbini:{ ja:'酔っ払いがコンビニで酒を欲しがり動かない…そばで待て！', en:'The drunk stops at the konbini craving booze… wait beside him!' },
     msgBring:{ ja:'酔っぱらいを救い出せ！', en:'Rescue the drunk!' },
+    msgDeliverClose:{ ja:'酔っ払いを改札のすぐ近くまで連れて来い！', en:'Bring the drunk right up to the gate!' },
     // リザルト
     resCleared:{ ja:(tm,d,dr)=>'送り届け成功！　タイム '+tm+'　/　見つかった '+d+'回・手放し '+dr+'回', en:(tm,d,dr)=>'Delivered! Time '+tm+'　/　Spotted '+d+'×・Dropped '+dr+'×' },
     resRank:{ ja:'あなたのランク：', en:'Your rank: ' },
@@ -793,7 +795,7 @@ const CONFIG = {
       const su=makeStair("z", hx1, sy0, 2);
       carveStairInto(su);
       su.run.forEach(([x,y])=>{ const k=x+","+y; stairTileSet.add(k); stairTileLevel[k]=2; slabOmit[3].add(k); });
-      su.oneWay=0;
+      // oneWayは設定しない（=両方向。通行人も上り下りに使える）
       [...su.run,su.entry,su.exit,su.beyond].forEach(t=>usedW.add(t[0]+","+t[1]));
       su.rails.forEach(t=>usedR.add(t[0]+","+t[1]));
       placed.push({cxTile:su.cxTile,cyTile:su.cyTile});
@@ -2062,10 +2064,18 @@ const CONFIG = {
     platformStartTile();            // 地下2階の敵の配置レーンだけランダムに決める（プレイヤー開始位置には使わない）
     targetLane=(Math.random()*Math.min(LANES.length,SHINJUKU_LINES.length))|0;  // 目標の路線（ホーム）を指定
     buildWorld();                   // exits / correctExitNo / 路線サイン はここで確定
-    // ゴール（正解の出口）と別フロアの出口の「外（改札の目の前）」からスタート
-    const goalExit = exits.find(e=>e.no===correctExitNo) || exits[0];
-    const startCands = exits.filter(e=>e.level>=2 && e.level!==goalExit.level && e.plaza);
-    const startExit = startCands.length ? startCands[(Math.random()*startCands.length)|0] : goalExit;
+    // ゴールとスタートを「別の地上階」の出口に（両フロアに出口がある時は必ず別フロア）。スタートは改札の目の前(外)
+    const exF2=exits.filter(e=>e.level===2 && e.plaza), exFN=exits.filter(e=>e.level===NF && e.plaza);
+    let goalExit, startExit;
+    if(exF2.length && exFN.length){
+      const goalTop=Math.random()<0.5, gArr=goalTop?exFN:exF2, sArr=goalTop?exF2:exFN;
+      goalExit=gArr[(Math.random()*gArr.length)|0]; startExit=sArr[(Math.random()*sArr.length)|0];
+    } else {
+      const all=exits.filter(e=>e.plaza); all.length||all.push(exits[0]);
+      goalExit=all[(Math.random()*all.length)|0];
+      const others=all.filter(e=>e!==goalExit); startExit=others.length?others[(Math.random()*others.length)|0]:goalExit;
+    }
+    correctExitNo=goalExit.no;
     const sLvl = startExit.level || NF, od=1.2*T;   // 改札の外への距離（広場の中）
     player.x=startExit.x + startExit.ox*od; player.z=startExit.z + startExit.oy*od;
     player.y=(sLvl-1)*FH; player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
@@ -2286,6 +2296,7 @@ const CONFIG = {
     for(const chaser of chasers){
       const same=chaser.level===player.level;
       const d=Math.hypot(player.x-chaser.x, player.z-chaser.z);
+      chaser.gripT = (same && d<C.CATCH_DIST) ? (chaser.gripT||0)+dt : 0;   // 密着持続時間（視点回し悪用の対策）
       let sight=chaser.alerted?C.CHASER_SIGHT*C.ALERT_SIGHT_MULT:C.CHASER_SIGHT;
       if(chaser.level>=2 && !metEnemyUnderground) sight*=2;   // 地下(地下1階)で敵に未遭遇なら地上は遭遇率を倍に
       if(chaser.level>=2 && nearExit) sight*=C.NEAR_EXIT_SIGHT_MULT; // 出口付近は遭遇率UP
@@ -2851,7 +2862,8 @@ const CONFIG = {
       const vx=chaser.x-player.x, vz=chaser.z-player.z, dd=Math.hypot(vx,vz);
       // 正面(画面に映る範囲)に敵が居る時だけ捕まる。背後・側面では捕まえず、敵は正面へ回り込む
       const front=(dd>0.001)?((vx/dd)*fwd.x+(vz/dd)*fwd.z):1;
-      if(dd<C.CATCH_DIST && front>=Math.cos(C.CATCH_FOV*Math.PI/180)){ endGame(false); return; }
+      // 正面(画面内)で捕獲。ただし密着がCATCH_GRAB_TIME続いたら向きに関係なく掴む（視点回し悪用の対策）
+      if(dd<C.CATCH_DIST && (front>=Math.cos(C.CATCH_FOV*Math.PI/180) || (chaser.gripT||0)>=C.CATCH_GRAB_TIME)){ endGame(false); return; }
     }
     // 改札を通って外（広場）へ出たらクリア＝正解の出口で、改札(壁面)より外側に出たか
     const pe=inExitPlaza(player.x, player.z, player.level);
@@ -2859,7 +2871,8 @@ const CONFIG = {
       const outward=(player.x-pe.x)*pe.ox + (player.z-pe.z)*pe.oy;   // 改札より外（プラス）か
       if(outward>T*0.4){
         // 酔っ払いを改札まで連れて来ている時のみクリア（外周リングで置き去りにする抜け道を防ぐ）
-        if(carrying && drunk && Math.hypot(player.x-drunk.x,player.z-drunk.z)<T*3.5){ endGame(true); return; }
+        if(carrying && drunk && Math.hypot(player.x-drunk.x,player.z-drunk.z)<T*4.2){ endGame(true); return; }
+        else if(carrying && drunkMsgT<=0){ setDrunkMsg("msgDeliverClose",1.4); }   // 連れているが改札から離れている
         else if(!carrying && drunkMsgT<=0){ setDrunkMsg("msgBring",1.5); }
       }
     }
