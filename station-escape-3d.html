@@ -172,6 +172,7 @@ const CONFIG = {
   CHASER_MEMORY: 4,     // 見失ってから追跡を続ける秒数
   B2_CHASER_MEMORY: 12, // 地下2階の敵が見失ってから追跡を続ける秒数（長め・速度は同じ）
   CATCH_DIST: 1.4,      // この距離まで近づかれると捕まる
+  CATCH_FOV: 62,        // 捕まえるのはプレイヤーの正面±この角度(度)に敵が居る時だけ（画面に映る範囲）。背後からは捕まえず正面へ回り込む
   CHASER_FLOOR_TIME: 22,// 敵が1フロアを巡回し続ける時間(秒)。これを過ぎると別フロアへ入れ替わる
   START_GRACE: 10,      // スタートから この秒数は敵に探知されない（猶予）
 
@@ -327,7 +328,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.119";
+  const APP_VERSION = "Ver.120";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2277,7 +2278,18 @@ const CONFIG = {
       chaser.state = chasing? (see?"発見・追跡":"捜索") : (chaser.mode==="transit"?"別フロアへ移動":"巡回");
 
       if(chasing){
-        moveToward(chaser, chaser.lx, chaser.lz, C.CHASER_SPEED, dt, CHASER_R);
+        let tgx=chaser.lx, tgz=chaser.lz;
+        if(same){                                         // 接近時はプレイヤーの正面(画面内)へ回り込んでから捕まえる
+          const dd=Math.hypot(player.x-chaser.x, player.z-chaser.z);
+          if(dd < C.CATCH_DIST+7){
+            const vx=chaser.x-player.x, vz=chaser.z-player.z, vl=Math.hypot(vx,vz)||1;
+            const front=(vx/vl)*fwd.x+(vz/vl)*fwd.z;      // 敵がプレイヤーの正面側にいるか（>cos(FOV)で正面）
+            if(front < Math.cos(C.CATCH_FOV*Math.PI/180)){ // まだ正面でない→正面の一点を狙って回り込む
+              tgx=player.x+fwd.x*(C.CATCH_DIST*0.7); tgz=player.z+fwd.z*(C.CATCH_DIST*0.7);
+            } else { tgx=player.x; tgz=player.z; }
+          }
+        }
+        moveToward(chaser, tgx, tgz, C.CHASER_SPEED, dt, CHASER_R);
       } else if(chaser.mode==="transit"){
         enemyTransitStep(chaser, dt);
       } else {
@@ -2808,7 +2820,11 @@ const CONFIG = {
   }
   function checkResult(){
     if(gameTime>=C.START_GRACE) for(const chaser of chasers){   // 開始直後の猶予中は捕まらない
-      if(chaser.level===player.level && Math.hypot(player.x-chaser.x,player.z-chaser.z)<C.CATCH_DIST){ endGame(false); return; }
+      if(chaser.level!==player.level) continue;
+      const vx=chaser.x-player.x, vz=chaser.z-player.z, dd=Math.hypot(vx,vz);
+      // 正面(画面に映る範囲)に敵が居る時だけ捕まる。背後・側面では捕まえず、敵は正面へ回り込む
+      const front=(dd>0.001)?((vx/dd)*fwd.x+(vz/dd)*fwd.z):1;
+      if(dd<C.CATCH_DIST && front>=Math.cos(C.CATCH_FOV*Math.PI/180)){ endGame(false); return; }
     }
     // 改札を通って外（広場）へ出たらクリア＝正解の出口で、改札(壁面)より外側に出たか
     const pe=inExitPlaza(player.x, player.z, player.level);
