@@ -327,7 +327,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.117";
+  const APP_VERSION = "Ver.118";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -355,10 +355,10 @@ const CONFIG = {
     mapOpen:{ ja:'🗺 マップを開く（M）', en:'🗺 Open map (M)' },
     mapClose:{ ja:'🗺 たたむ（M）', en:'🗺 Collapse (M)' },
     here:{ ja:f=>'現在地: '+f, en:f=>'Floor: '+f },
-    goalInit:{ ja:(ln,fl,n)=>'▶ 地下1階の【'+ln+'】ホームの酔っ払いを'+fl+'の'+n+'番出口へ連れ戻せ', en:(ln,fl,n)=>'▶ Bring the drunk from the B1 '+ln+' platform to Exit '+n+' ('+fl+')' },
+    goalInit:{ ja:(ln,fl,nm)=>'▶ 地下1階の【'+ln+'】ホームの酔っ払いを'+fl+'の'+nm+'へ連れ戻せ', en:(ln,fl,nm)=>'▶ Bring the drunk from the B1 '+ln+' platform to '+nm+' ('+fl+')' },
     goalFind:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームの酔っ払いを探せ（黄色い光の柱）', en:ln=>'▶ Find the drunk on the B1 '+ln+' platform (yellow light)' },
     goalFetch:{ ja:f=>'▶ '+f+'にいる酔っ払いを連れに行け（黄色い光の柱）', en:f=>'▶ Go get the drunk on '+f+' (yellow light)' },
-    goalDeliver:{ ja:(fl,n)=>'▶ '+fl+'の'+n+'番出口（改札）を通って外へ連れ出せ', en:(fl,n)=>'▶ Take the drunk out through Exit '+n+' ('+fl+')' },
+    goalDeliver:{ ja:(fl,nm)=>'▶ '+fl+'の'+nm+'（改札）を通って外へ連れ出せ', en:(fl,nm)=>'▶ Take the drunk out through '+nm+' ('+fl+')' },
     subSafe:{ ja:s=>'🛡 安全（敵探知なし）あと'+s+'秒　/　', en:s=>'🛡 Safe (no detection) '+s+'s　/　' },
     subEnemy:{ ja:(st,cr)=>'敵: '+st+cr+'　/　', en:(st,cr)=>'Enemy: '+st+cr+'　/　' },
     enChase:{ ja:'追跡中！', en:'CHASING!' }, enWander:{ ja:'徘徊', en:'Patrol' },
@@ -533,14 +533,14 @@ const CONFIG = {
   wallTex.repeat.set(2,2);
 
   // 縦長の出口看板テクスチャ（出/口を縦並び＋大きな番号）
-  function exitSignTextureV(n){
-    const w=170,h=400,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+  function exitSignTextureV(jaName, enName){
+    const w=180,h=400,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
     g.fillStyle="#1a6b32";g.fillRect(0,0,w,h);
     g.strokeStyle="#fff";g.lineWidth=8;g.strokeRect(7,7,w-14,h-14);
     g.fillStyle="#fff";g.textAlign="center";g.textBaseline="middle";
-    g.font="bold 56px sans-serif";g.fillText("出",w/2,h*0.15);g.fillText("口",w/2,h*0.30);
-    g.font="bold 130px sans-serif";g.fillText(String(n),w/2,h*0.60);
-    g.font="bold 30px sans-serif";g.fillText("EXIT",w/2,h*0.86);
+    g.font="bold 40px sans-serif";g.fillText("出口",w/2,h*0.16);
+    g.font="bold 84px sans-serif";g.fillText(jaName,w/2,h*0.52,w-26);          // 方角名（はみ出す時は自動縮小）
+    g.font="bold 24px sans-serif";g.fillText((enName||"EXIT"),w/2,h*0.86,w-20);
     const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;
   }
   function exitSignTexture(n){
@@ -588,8 +588,8 @@ const CONFIG = {
     return g;
   }
   // 地下2階＝駅のプラットホーム（縦長・2マス幅の島式ホーム5面を独立配置、両側に電車。各ホーム同位置に階段）
-  const LANES=[[2,4],[7,9],[12,14],[17,19],[22,24]];          // 5つのホーム(3マス幅)
-  const TRACKS=[[0,1],[5,6],[10,11],[15,16],[20,21],[25,26]]; // 線路(電車)
+  const LANES=[[2,3],[6,7],[10,11],[14,15],[18,19],[22,23]];          // 6つのホーム(2マス幅・少し狭め)
+  const TRACKS=[[0,1],[4,5],[8,9],[12,13],[16,17],[20,21],[24,25]];   // 線路(電車)＝7本
   const PLAT_TOP=6, PLAT_BOT=42, TOP_Y0=3, BOT_Y0=43;        // ホームは y=6..42、階段は両端(上y3〜/下y43〜)
   const CENTER_COLS=LANES.map(l=>l[0]+1);                     // 各ホームの中央列
   const OBJ_ROWS=[]; for(let _y=PLAT_TOP+2;_y<=PLAT_BOT-2;_y+=2) OBJ_ROWS.push(_y); // 中央に等間隔・多めに
@@ -934,7 +934,7 @@ const CONFIG = {
   // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
   const SHINJUKU_LINES=[{name:"山手線",en:"Yamanote Line",col:0x9acd32},{name:"中央線",en:"Chuo Line",col:0xf15a22},
     {name:"埼京線",en:"Saikyo Line",col:0x00a650},{name:"湘南新宿ライン",en:"Shonan-Shinjuku Line",col:0xe4002b},
-    {name:"小田急線",en:"Odakyu Line",col:0x0072bc}];
+    {name:"小田急線",en:"Odakyu Line",col:0x0072bc},{name:"京王線",en:"Keio Line",col:0xd1006c}];
   let targetLane=0;
   let toilets=[], toiletState="none", toiletT=0;   // トイレ（予兆→猶予→失敗でGAME OVER）
   let crowdTimer=8, crowdPhase="idle", crowdT=0, baseB2Target=0, baseB1Target=0, baseGroundTarget=0;   // 電車到着で起きる動的な人混みと、その後のB2→B1→地上の流れ
@@ -1373,7 +1373,7 @@ const CONFIG = {
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
   function lineDirectoryTex(){
-    const w=300,hh=340,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
+    const w=300,hh=400,cv=document.createElement("canvas");cv.width=w;cv.height=hh;const g=cv.getContext("2d");
     g.fillStyle="#0e141b"; g.fillRect(0,0,w,hh); g.strokeStyle="#39424d"; g.lineWidth=4; g.strokeRect(4,4,w-8,hh-8);
     g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle"; g.font="bold 24px sans-serif"; g.fillText("地下ホーム 路線",w/2,24);
     g.fillStyle="#aeb6bd"; g.font="bold 15px sans-serif"; g.fillText("Lines / Platforms",w/2,46);
@@ -1396,8 +1396,8 @@ const CONFIG = {
     }
     // 地上：各出口の構内側に路線案内ボード（吊り下げ・両面）
     const dirFace=new THREE.MeshBasicMaterial({map:lineDirectoryTex(),side:THREE.DoubleSide}); dirFace.toneMapped=false;
-    const base=(NF-1)*FH;
     for(const e of exits){
+      const base=(e.level-1)*FH;                                  // 出口のあるフロアの高さ
       const board=new THREE.Mesh(new THREE.PlaneGeometry(1.5,1.9), dirFace);
       board.position.set(e.sx, base+2.7, e.sz); board.lookAt(2*e.sx-e.x, base+2.7, 2*e.sz-e.z); worldRoot.add(board); // 構内側を向く
     }
@@ -1862,15 +1862,21 @@ const CONFIG = {
     }
     const perimIdx=c=> c.oy<0 ? c.tx : (c.ox>0 ? C.COLS+c.ty : (c.oy>0 ? C.COLS+C.ROWS+(C.COLS-c.tx) : 2*C.COLS+C.ROWS+(C.ROWS-c.ty)));
     chosen.sort((a,b)=>perimIdx(a)-perimIdx(b));
+    // 出口名は番号ではなく方角（東西南北）。同方角が複数なら連番を付与
+    const DJA=["北","北東","東","南東","南","南西","西","北西"], DEN=["North","Northeast","East","Southeast","South","Southwest","West","Northwest"];
+    const dir8=c=>{ const a=Math.atan2(c.tx-cx,-(c.ty-cy))*180/Math.PI; return ((Math.round(a/45)%8)+8)%8; };
+    const dcount={}; chosen.forEach(c=>{ const d=dir8(c); dcount[d]=(dcount[d]||0)+1; }); const dseen={};
     chosen.forEach((c,idx)=>{
       const no=idx+1, ef=c.f, base=(ef-1)*FH;
+      const di=dir8(c); dseen[di]=(dseen[di]||0)+1; const suf=(dcount[di]>1)?String(dseen[di]):"";
+      const dirName=DJA[di]+"口"+suf, dirEn=DEN[di]+" Exit"+(suf?" "+suf:""), dshort=DJA[di]+suf;  // 例：北口 / 南東口2
       const wide=(no===3||no===5);          // 横幅5倍の改札出口
       const mid=(no===8);                   // 少し大きめ(3マス幅)
       const half=wide?2:(mid?1:0);
       const perpx=(c.ox===0)?1:0, perpy=(c.oy===0)?1:0;
       const w=tileToWorld(c.tx,c.ty);
       const mx=w.x+c.ox*T*0.5, mz=w.z+c.oy*T*0.5;
-      const signTex=new THREE.MeshBasicMaterial({map:exitSignTextureV(no),side:THREE.DoubleSide});
+      const signTex=new THREE.MeshBasicMaterial({map:exitSignTextureV(dirName,dirEn),side:THREE.DoubleSide});
       for(let k=-half;k<=half;k++){
         const bx=c.bx+k*perpx, by=c.by+k*perpy;
         if(bx>=0&&by>=0&&bx<C.COLS&&by<C.ROWS){ skip[ef].add(bx+","+by); grids[ef][by][bx]=0; } // 壁を開口＝床にして通り抜け可能に
@@ -1909,7 +1915,7 @@ const CONFIG = {
       else { const a0=mz - c.oy*T*0.6, a1=mz + c.oy*dep;
         plaza={minX:w.x-owid/2, maxX:w.x+owid/2, minZ:Math.min(a0,a1), maxZ:Math.max(a0,a1), level:ef}; }
       const inner=tileToWorld(c.tx,c.ty);   // 出口の構内側の床（人の出入り口）
-      exits.push({no, tx:c.tx, ty:c.ty, x:mx, z:mz, sx:inner.x, sz:inner.z, level:ef, wide, mid, plaza, ox:c.ox, oy:c.oy});
+      exits.push({no, dirName, dirEn, dshort, tx:c.tx, ty:c.ty, x:mx, z:mz, sx:inner.x, sz:inner.z, level:ef, wide, mid, plaza, ox:c.ox, oy:c.oy});
     });
     correctExitNo=(C.CORRECT_EXIT && exits.some(e=>e.no===C.CORRECT_EXIT))
       ? C.CORRECT_EXIT : (exits.length?exits[(Math.random()*exits.length)|0].no:1);
@@ -1985,7 +1991,7 @@ const CONFIG = {
     const sLvl = startExit.level || NF;
     player.x=startExit.sx; player.z=startExit.sz; player.y=(sLvl-1)*FH; player.yaw=0; player.pitch=0; player.level=sLvl; player.plevel=sLvl;
     buildDrunkAndKonbini(player.x, player.z, sLvl);   // 酔っ払い（各ホーム）＆コンビニを配置
-    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(sLvl), correctExitNo);
+    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(sLvl), (lang==="en"?startExit.dirEn:startExit.dirName));
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.toggle("hidden", userMode);   // 現在地は開発者プレイのみ表示
@@ -2782,8 +2788,8 @@ const CONFIG = {
     for(const e of exits){ if(e.level!==F) continue; const px=(e.x/T)*cs, py=(e.z/T)*cs;
       mapCtx.fillStyle=(e.no===correctExitNo)?"#f5b50a":"#2ecf6b";
       mapCtx.fillRect(px-cs*0.6,py-cs*0.6,cs*1.2,cs*1.2);
-      mapCtx.fillStyle="#0c2a16"; mapCtx.font="bold "+Math.round(cs*1.7)+"px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
-      mapCtx.fillText(String(e.no),px,py);
+      mapCtx.fillStyle="#0c2a16"; mapCtx.font="bold "+Math.round(cs*1.0)+"px sans-serif"; mapCtx.textAlign="center"; mapCtx.textBaseline="middle";
+      mapCtx.fillText(e.dshort||String(e.no),px,py);
     }
     // 現在フロアの歩行者・敵だけ表示
     mapCtx.fillStyle="#9aa1aa";
@@ -2838,7 +2844,7 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（運搬の状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=tr(drunkMsg);
-      else if(carrying){ const ce=exits.find(e=>e.no===correctExitNo); goalEl.textContent = tr('goalDeliver', floorName(ce?ce.level:NF), correctExitNo); }
+      else if(carrying){ const ce=exits.find(e=>e.no===correctExitNo); const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):""; goalEl.textContent = tr('goalDeliver', floorName(ce?ce.level:NF), cn); }
       else if(drunk && drunk.level!==1) goalEl.textContent = tr('goalFetch', floorName(drunk.level));   // 手放した後＝酔っ払いの現在フロアを指す
       else goalEl.textContent = tr('goalFind', lineName(targetLane));
       carryEl.classList.toggle("hidden", !carrying);            // 連れている＝緑
