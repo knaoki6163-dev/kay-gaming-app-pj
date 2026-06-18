@@ -200,6 +200,7 @@ const CONFIG = {
   INVERT_LOOK_X: true,  // 視点の左右反転
   INVERT_LOOK_Y: true,  // 視点の上下反転
   EYE_HEIGHT: 1.6,      // 視点の高さ
+  OUTSIDE_RING: 18,     // 改札の外＝建物外周をぐるりと歩ける広場リングの幅（各地上階の出口が外でつながる）
 
   LOOP_PROB: 0.16,      // 回り道を作る確率（大きいほど開放的）
   PLAZA_COUNTS: {1:0, 2:16, 3:14}, // 各フロアの広場の数（地下2階はプラットホームなので未使用）
@@ -328,7 +329,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.120";
+  const APP_VERSION = "Ver.121";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -865,6 +866,14 @@ const CONFIG = {
     for(const e of exits){ const p=e.plaza; if(!p || p.level!==f) continue;
       if(x>=p.minX && x<=p.maxX && z>=p.minZ && z<=p.maxZ) return e; }
     return null;
+  }
+  // 建物外周をぐるりと歩ける広場リング（地上階のみ）。各フロアの出口が外側でつながる
+  function inOutsideRing(x,z,f){
+    if(f<2) return false;
+    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING;
+    if(x<-R||x>W+R||z<-R||z>D+R) return false;     // リングの外
+    if(x>0&&x<W&&z>0&&z<D) return false;            // 建物内部はリングではない
+    return true;
   }
   function allFloorTiles(f){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grids[f][y][x]===0)a.push({x,y}); return a; }
 
@@ -1525,6 +1534,7 @@ const CONFIG = {
       }
     }
     buildPlatform();   // 地下2階＝プラットホーム
+    buildOutsideRings();// 各地上階の外周をつなぐ広場リング（出口どうしが外でつながる）
     buildOdakyuUpper();// 小田急線の地上1階ホーム＋電車
     buildLineSigns();  // 路線案内サイン（地下1階の各ホーム階段／地上の各出口）
 
@@ -1985,6 +1995,17 @@ const CONFIG = {
     const sky=ox!==0? new THREE.BoxGeometry(0.5,T*9,skyW) : new THREE.BoxGeometry(skyW,T*9,0.5);
     const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*(len-T), base+T*3, mz+oy*(len-T)); worldRoot.add(wall);
   }
+  // 各地上階の外周をぐるりと囲む広場リング（出口どうしが外でつながる道）＋外縁の空
+  function buildOutsideRings(){
+    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING, sh=T*9;
+    for(let f=2; f<=NF; f++){
+      const base=(f-1)*FH, y=base+0.012;
+      const strip=(x0,x1,z0,z1)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,z1-z0), plazaMat); m.rotation.x=-Math.PI/2; m.position.set((x0+x1)/2,y,(z0+z1)/2); worldRoot.add(m); };
+      strip(-R,0,-R,D+R); strip(W,W+R,-R,D+R); strip(0,W,-R,0); strip(0,W,D,D+R);   // 西・東・北・南
+      const sky=(cx,cz,sx,sz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sh,sz), skyMat); m.position.set(cx,base+sh/2,cz); worldRoot.add(m); };
+      sky(-R, D/2, 0.6, D+2*R); sky(W+R, D/2, 0.6, D+2*R); sky(W/2, -R, W+2*R, 0.6); sky(W/2, D+R, W+2*R, 0.6); // 外縁の空
+    }
+  }
 
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
@@ -2038,12 +2059,15 @@ const CONFIG = {
     platformStartTile();            // 地下2階の敵の配置レーンだけランダムに決める（プレイヤー開始位置には使わない）
     targetLane=(Math.random()*Math.min(LANES.length,SHINJUKU_LINES.length))|0;  // 目標の路線（ホーム）を指定
     buildWorld();                   // exits / correctExitNo / 路線サイン はここで確定
-    // プレイヤーは「地上の指定出口」からスタート（そこから地下へ降りて酔っ払いを探し、ここへ連れ戻す）
-    const startExit = exits.find(e=>e.no===correctExitNo) || exits[0];
-    const sLvl = startExit.level || NF;
-    player.x=startExit.sx; player.z=startExit.sz; player.y=(sLvl-1)*FH; player.yaw=0; player.pitch=0; player.level=sLvl; player.plevel=sLvl;
+    // ゴール（正解の出口）と別フロアの出口の「外（改札の目の前）」からスタート
+    const goalExit = exits.find(e=>e.no===correctExitNo) || exits[0];
+    const startCands = exits.filter(e=>e.level>=2 && e.level!==goalExit.level && e.plaza);
+    const startExit = startCands.length ? startCands[(Math.random()*startCands.length)|0] : goalExit;
+    const sLvl = startExit.level || NF, od=1.2*T;   // 改札の外への距離（広場の中）
+    player.x=startExit.x + startExit.ox*od; player.z=startExit.z + startExit.oy*od;
+    player.y=(sLvl-1)*FH; player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
     buildDrunkAndKonbini(player.x, player.z, sLvl);   // 酔っ払い（各ホーム）＆コンビニを配置
-    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(sLvl), (lang==="en"?startExit.dirEn:startExit.dirName));
+    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(goalExit.level), (lang==="en"?goalExit.dirEn:goalExit.dirName));
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.toggle("hidden", userMode);   // 現在地は開発者プレイのみ表示
@@ -2108,7 +2132,7 @@ const CONFIG = {
   // ---------- 移動 ----------
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
-    if(inExitPlaza(x,z,player.level)) return true;          // 改札の外の広場へ通り抜け可能
+    if(inExitPlaza(x,z,player.level) || inOutsideRing(x,z,player.level)) return true;  // 改札の外の広場＆外周リングは歩ける
     // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
     if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
@@ -2831,8 +2855,9 @@ const CONFIG = {
     if(pe && pe.no===correctExitNo){
       const outward=(player.x-pe.x)*pe.ox + (player.z-pe.z)*pe.oy;   // 改札より外（プラス）か
       if(outward>T*0.4){
-        if(carrying){ endGame(true); return; }
-        else if(drunkMsgT<=0){ setDrunkMsg("msgBring",1.5); }
+        // 酔っ払いを改札まで連れて来ている時のみクリア（外周リングで置き去りにする抜け道を防ぐ）
+        if(carrying && drunk && Math.hypot(player.x-drunk.x,player.z-drunk.z)<T*3.5){ endGame(true); return; }
+        else if(!carrying && drunkMsgT<=0){ setDrunkMsg("msgBring",1.5); }
       }
     }
   }
