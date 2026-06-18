@@ -320,7 +320,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.113";
+  const APP_VERSION = "Ver.114";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -348,8 +348,8 @@ const CONFIG = {
     mapOpen:{ ja:'🗺 マップを開く（M）', en:'🗺 Open map (M)' },
     mapClose:{ ja:'🗺 たたむ（M）', en:'🗺 Collapse (M)' },
     here:{ ja:f=>'現在地: '+f, en:f=>'Floor: '+f },
-    goalInit:{ ja:(ln,n)=>'▶ 地下2階の【'+ln+'】ホームの酔っ払いを'+n+'番出口へ連れ戻せ', en:(ln,n)=>'▶ Bring the drunk from the B2 '+ln+' platform to Exit '+n },
-    goalFind:{ ja:ln=>'▶ 地下2階【'+ln+'】ホームの酔っ払いを探せ（黄色い光の柱）', en:ln=>'▶ Find the drunk on the B2 '+ln+' platform (yellow light)' },
+    goalInit:{ ja:(ln,n)=>'▶ 地下1階の【'+ln+'】ホームの酔っ払いを'+n+'番出口へ連れ戻せ', en:(ln,n)=>'▶ Bring the drunk from the B1 '+ln+' platform to Exit '+n },
+    goalFind:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームの酔っ払いを探せ（黄色い光の柱）', en:ln=>'▶ Find the drunk on the B1 '+ln+' platform (yellow light)' },
     goalFetch:{ ja:f=>'▶ '+f+'にいる酔っ払いを連れに行け（黄色い光の柱）', en:f=>'▶ Go get the drunk on '+f+' (yellow light)' },
     goalDeliver:{ ja:n=>'▶ '+n+'番出口へ酔っ払いを連れ戻せ', en:n=>'▶ Carry the drunk to Exit '+n },
     subSafe:{ ja:s=>'🛡 安全（敵探知なし）あと'+s+'秒　/　', en:s=>'🛡 Safe (no detection) '+s+'s　/　' },
@@ -399,8 +399,8 @@ const CONFIG = {
   }
   applyLang();   // 初期表示（言語ラベル等を確定）
 
-  // フロア名：最下層から 地下2階→地下1階→地上（最上階）
-  function floorName(lv){ if(lang==="en") return lv>=NF?"Ground":("B"+(NF-lv)); return lv>=NF ? "地上" : "地下"+(NF-lv)+"階"; }
+  // フロア名（最下層から）：地下1階(プラットホーム)→地上1階(デパート)→地上2階(改札/出口)
+  function floorName(lv){ if(lang==="en") return lv>=2 ? (lv-1)+"F" : "B"+(2-lv); return lv>=2 ? "地上"+(lv-1)+"階" : "地下"+(2-lv)+"階"; }
   function lineName(i){ const ln=SHINJUKU_LINES[i]; return lang==="en"?ln.en:ln.name; }
 
   // ---------- Three.js ----------
