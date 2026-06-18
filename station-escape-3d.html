@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.124";
+  const APP_VERSION = "Ver.125";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2000,15 +2000,52 @@ const CONFIG = {
     const sky=ox!==0? new THREE.BoxGeometry(0.5,T*9,skyW) : new THREE.BoxGeometry(skyW,T*9,0.5);
     const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*(len-T), base+T*3, mz+oy*(len-T)); worldRoot.add(wall);
   }
-  // 各地上階の外周をぐるりと囲む広場リング（出口どうしが外でつながる道）＋外縁の空
+  // 各地上階の外周をぐるりと囲む広場リング（出口どうしが外でつながる道）＋周囲の街
   function buildOutsideRings(){
-    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING, sh=T*9;
+    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING;
     for(let f=2; f<=NF; f++){
       const base=(f-1)*FH, y=base+0.012;
       const strip=(x0,x1,z0,z1)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,z1-z0), plazaMat); m.rotation.x=-Math.PI/2; m.position.set((x0+x1)/2,y,(z0+z1)/2); worldRoot.add(m); };
       strip(-R,0,-R,D+R); strip(W,W+R,-R,D+R); strip(0,W,-R,0); strip(0,W,D,D+R);   // 西・東・北・南
-      const sky=(cx,cz,sx,sz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sh,sz), skyMat); m.position.set(cx,base+sh/2,cz); worldRoot.add(m); };
-      sky(-R, D/2, 0.6, D+2*R); sky(W+R, D/2, 0.6, D+2*R); sky(W/2, -R, W+2*R, 0.6); sky(W/2, D+R, W+2*R, 0.6); // 外縁の空
+    }
+    buildOutsideScenery(W,D,R);
+  }
+  let _cityMats=null;
+  function cityWallTex(base){
+    const w=64,h=128,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    g.fillStyle=base; g.fillRect(0,0,w,h);
+    for(let yy=7; yy<h-7; yy+=12) for(let xx=6; xx<w-8; xx+=13){
+      g.fillStyle=(Math.random()<0.55)?"#cfe0f2":"#5c6773"; g.fillRect(xx,yy,9,8);   // 窓（明/暗）
+    }
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=2; return t;
+  }
+  // 駅の外＝周囲の街（ビル群・街灯・植栽）と遠景の空。リングの外側に作り込む
+  function buildOutsideScenery(W,D,R){
+    const gy=FH;                                   // 屋外の地面＝地上1階の高さ
+    if(!_cityMats) _cityMats=["#8f9aa6","#7a8794","#9aa6b0","#6f7c89","#aab3bb"].map(c=>{
+      const m=new THREE.MeshBasicMaterial({map:cityWallTex(c)}); m.fog=false; m.toneMapped=false; return m; });
+    const RS=R+46;                                 // 空までの距離（街の奥行き）
+    const skyM=skyMat, sh=T*18;
+    const sky=(cx,cz,sx,sz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sh,sz),skyM); m.position.set(cx,gy+sh/2-FH*0.5,cz); worldRoot.add(m); };
+    sky(-RS,D/2,1,D+2*RS); sky(W+RS,D/2,1,D+2*RS); sky(W/2,-RS,W+2*RS,1); sky(W/2,D+RS,W+2*RS,1);
+    // ビル群：4辺の外側の帯に並べる
+    const bldg=(cx,cz,wx,wz)=>{ const h=16+Math.random()*46, m=_cityMats[(Math.random()*_cityMats.length)|0];
+      const b=new THREE.Mesh(new THREE.BoxGeometry(wx,h,wz),m); b.position.set(cx,gy+h/2,cz); worldRoot.add(b);
+      const roof=new THREE.Mesh(new THREE.BoxGeometry(wx*0.5,1.5,wz*0.5),m); roof.position.set(cx,gy+h+0.75,cz); worldRoot.add(roof); };
+    const rowH=(x0,x1,zc,depth)=>{ for(let x=x0; x<x1; x+= 12+Math.random()*8){ const wx=9+Math.random()*7; bldg(x+wx/2, zc+(Math.random()-0.5)*8, wx, depth+Math.random()*5); } };
+    const rowV=(z0,z1,xc,depth)=>{ for(let z=z0; z<z1; z+= 12+Math.random()*8){ const wz=9+Math.random()*7; bldg(xc+(Math.random()-0.5)*8, z+wz/2, depth+Math.random()*5, wz); } };
+    rowH(-R, W+R, -(R+18), 12); rowH(-R, W+R, D+R+18, 12);    // 北・南
+    rowV(-R, D+R, -(R+18), 12); rowV(-R, D+R, W+R+18, 12);    // 西・東
+    // 街灯・植栽（各地上階のリングの縁に等間隔）
+    const poleM=new THREE.MeshLambertMaterial({color:0x5a626b}), lampM=new THREE.MeshBasicMaterial({color:0xfff2c4}); lampM.toneMapped=false;
+    const bushM=new THREE.MeshLambertMaterial({color:0x3f7d46});
+    for(let f=2; f<=NF; f++){ const base=(f-1)*FH;
+      const lamp=(x,z)=>{ const p=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,3.2,6),poleM); p.position.set(x,base+1.6,z); worldRoot.add(p);
+        const l=new THREE.Mesh(new THREE.SphereGeometry(0.34,8,8),lampM); l.position.set(x,base+3.3,z); worldRoot.add(l); }; // 光源は増やさず発光球で表現
+      const bush=(x,z)=>{ const b=new THREE.Mesh(new THREE.SphereGeometry(0.7+Math.random()*0.4,7,6),bushM); b.position.set(x,base+0.5,z); worldRoot.add(b); };
+      const er=R*0.45;   // 縁の内側
+      for(let x=4; x<W; x+=16){ lamp(x,-er); lamp(x,D+er); if((x/16|0)%2) { bush(x+6,-er); bush(x+6,D+er); } }
+      for(let z=4; z<D; z+=16){ lamp(-er,z); lamp(W+er,z); if((z/16|0)%2) { bush(-er,z+6); bush(W+er,z+6); } }
     }
   }
 
