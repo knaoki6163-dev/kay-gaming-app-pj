@@ -320,7 +320,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.111";
+  const APP_VERSION = "Ver.112";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2060,7 +2060,7 @@ const CONFIG = {
       if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
       if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
     }
-    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:0.42;   // 連れている間はランダム間隔の足音
+    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
       if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
@@ -2806,9 +2806,7 @@ const CONFIG = {
       setMission(m2El, false, tr('mEscape'));
       floorEl.textContent = tr('here', floorName(player.level));
       mapLabel.textContent = (lang==="en"?"MAP ("+floorName(player.level)+")":"MAP（"+floorName(player.level)+"）");
-      const graceLeft = Math.ceil(C.START_GRACE-gameTime);
-      const enSt = alert?tr('enChase'):tr('enWander'), crTag = crouching?tr('crouchTag'):"";
-      subEl.textContent = (graceLeft>0? tr('subSafe',graceLeft) : tr('subEnemy',enSt,crTag)) + tr('controls');
+      subEl.style.display="none";   // プレイ中は「敵:徘徊／WASD移動…」の補助表示を消す
       // ダッシュ・スタミナのゲージ
       let dfrac, dcol, dtxt;
       if(dashBursting && dashBurstSpeed>=C.DASH_SPEED){ dfrac=dashBurstLeft/C.DASH_DUR; dcol="#33d17a"; dtxt=tr('dashFull',Math.ceil(dashBurstLeft)); }
