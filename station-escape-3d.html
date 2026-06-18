@@ -320,7 +320,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.112";
+  const APP_VERSION = "Ver.113";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -2569,10 +2569,11 @@ const CONFIG = {
       const cand=wallAdjacentTiles(f);
       for(let i=cand.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [cand[i],cand[j]]=[cand[j],cand[i]]; }
       let made=0;
+      const cap = (f===NF)?24:16, minSep = (f===NF)?T*2.6:T*3.5;   // 地上はトイレを少し多めに
       for(const c of cand){
-        if(made>=16) break;
+        if(made>=cap) break;
         const w=tileToWorld(c.x,c.y);
-        if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<T*3.5)) continue;   // 近すぎる重複は避ける
+        if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<minSep)) continue;   // 近すぎる重複は避ける
         worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));
         // 青い円柱＝恒久的なトイレ目印。壁際（埋め込み）に常時表示
         const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,FH*0.82,10), new THREE.MeshBasicMaterial({color:0x2a9bff,transparent:true,opacity:0.6}));
