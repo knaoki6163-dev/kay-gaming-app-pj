@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.130";
+  const APP_VERSION = "Ver.131";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1985,18 +1985,19 @@ const CONFIG = {
       const post=new THREE.Mesh(new THREE.BoxGeometry(0.1, ph2-base, 0.1), new THREE.MeshLambertMaterial({color:0x8b9197}));
       post.position.set(sxp, base+(ph2-base)/2, szp); worldRoot.add(post);
       buildOutsidePlaza(mx,mz,c.ox,c.oy,base, wide?T*4.6:(mid?T*2.2:T*0.85));   // 出口の外＝広場
-      // 改札（ターンスタイル）：開口幅に改札機を並べる。間のレーンを通って外（広場）へ＝クリア
-      const lanes=2*half+1, gateMat=new THREE.MeshLambertMaterial({color:0x42505c});
+      // 改札（ターンスタイル）：開口幅を細かく区切って改札機を多く並べる。各レーンは人1.5人分(約3.3)
+      const owid=(2*half+1)*T, GLW=3.5, ng=Math.max(1,Math.round(owid/GLW));   // レーン数
+      const gateMat=new THREE.MeshLambertMaterial({color:0x42505c});
       const gleam=new THREE.MeshBasicMaterial({color:0x16c0b0}); gleam.toneMapped=false;
-      for(let k=0;k<=lanes;k++){
-        const off=(k-lanes/2)*T, gx=mx+perpx*off, gz=mz+perpy*off;
-        const gm=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.5:1.5,1.05,perpy?0.5:1.5), gateMat);
+      for(let k=0;k<=ng;k++){
+        const off=(k/ng-0.5)*owid, gx=mx+perpx*off, gz=mz+perpy*off;
+        const gm=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.38:1.5,1.05,perpy?0.38:1.5), gateMat);
         gm.position.set(gx, base+0.55, gz); worldRoot.add(gm);
-        const bar=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.55:0.18,0.12,perpy?0.55:0.18), gleam);
+        const bar=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.42:0.16,0.12,perpy?0.42:0.16), gleam);
         bar.position.set(gx, base+1.05, gz); worldRoot.add(bar);
       }
-      // 通り抜け可能な広場の範囲（プレイヤー・通行人が出入りできる外のスペース）
-      const owid=lanes*T, dep=T*3.0;
+      // 通り抜け可能な広場の範囲（プレイヤー・通行人が出入りできる外のスペース）。owidは改札と共通(開口幅)
+      const dep=T*3.0;
       let plaza;
       if(c.ox!==0){ const a0=mx - c.ox*T*0.6, a1=mx + c.ox*dep;
         plaza={minX:Math.min(a0,a1), maxX:Math.max(a0,a1), minZ:w.z-owid/2, maxZ:w.z+owid/2, level:ef}; }
@@ -2202,7 +2203,8 @@ const CONFIG = {
   // ---------- 移動 ----------
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
-    if(anyExitPlaza(x,z) || inOutsideRing(x,z,2)) return true;  // 改札の外の広場＆外周の坂リングは（階を問わず）歩ける
+    const r=PLAYER_R, out=(X,Z)=>anyExitPlaza(X,Z)||inOutsideRing(X,Z,2);
+    if(out(x-r,z-r)&&out(x+r,z-r)&&out(x-r,z+r)&&out(x+r,z+r)) return true;  // 体の四隅すべてが屋外なら可＝壁に食い込まない（外側のすり抜け防止）
     // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
     if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
