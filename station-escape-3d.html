@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.127";
+  const APP_VERSION = "Ver.128";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -768,12 +768,14 @@ const CONFIG = {
     stairs=[]; stairTileSet.clear(); slabOmit={}; stairTileLevel={};
     for(let f=2;f<=NF;f++) slabOmit[f]=new Set();
     const L=C.STAIR_LEN; const usedW=new Set(); const usedR=new Set(); const placed=[];
-    // 地下2階→地下1階：各ホームの両端に1マス幅の階段（5×2=10本、同位置）
+    // 地下1階(ホーム)→地上1階：各ホームの両端＋中央に1マス幅の階段
+    const CY0=((PLAT_TOP+PLAT_BOT)>>1)-1;   // 中央の階段の起点
     LANES.forEach(([x0,x1],laneIdx)=>{
-      for(const [y0,up] of [[TOP_Y0,-1],[BOT_Y0,1]]){
+      for(const [y0,up,center] of [[TOP_Y0,-1,false],[BOT_Y0,1,false],[CY0,1,true]]){
         const s=makePlatStair(x0,y0,up);
         s.lane=laneIdx;   // この階段が通じるホーム（路線）の番号
         carvePlatStair(s);
+        if(center) for(let dy=0;dy<3;dy++) grids[1][y0+dy][x0]=0;   // 中央階段は内側(x0)を平面のまま残し、ホームを分断しない
         s.run.forEach(([x,y])=>{ const k=x+","+y; stairTileSet.add(k); stairTileLevel[k]=1; slabOmit[2].add(k); });
         [...s.run,s.entry,s.exit,s.beyond].forEach(t=>usedW.add(t[0]+","+t[1]));
         s.rails.forEach(t=>usedR.add(t[0]+","+t[1]));
@@ -1335,6 +1337,7 @@ const CONFIG = {
     // 中央列のオブジェクト（壁ではなく小さい円の当たり判定）
     for(const [x0,x1] of LANES){ const xc=x0+1;
       for(const y of OBJ_ROWS){
+        if(stairTileSet.has(xc+","+y)) continue;   // 中央階段の上にはオブジェクトを置かない
         const w=tileToWorld(xc,y); const t=objType(y); let m,r;
         if(t==="pillar"){ m=new THREE.Mesh(new THREE.BoxGeometry(0.6,FH,0.6),pillarMat); m.position.set(w.x,FH/2,w.z); r=0.32; }
         else if(t==="kiosk"){ m=buildKiosk(w.x,0,w.z); r=2.0; } // 人より大きい遮蔽物（店舗）
