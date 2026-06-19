@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.128";
+  const APP_VERSION = "Ver.129";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -389,6 +389,7 @@ const CONFIG = {
     msgDeliverClose:{ ja:'酔っ払いを改札のすぐ近くまで連れて来い！', en:'Bring the drunk right up to the gate!' },
     // リザルト
     resCleared:{ ja:(tm,d,dr)=>'送り届け成功！　タイム '+tm+'　/　見つかった '+d+'回・手放し '+dr+'回', en:(tm,d,dr)=>'Delivered! Time '+tm+'　/　Spotted '+d+'×・Dropped '+dr+'×' },
+    resFailed:{ ja:(tm,d,dr)=>'脱出失敗…　タイム '+tm+'　/　見つかった '+d+'回・手放し '+dr+'回', en:(tm,d,dr)=>'Failed…　Time '+tm+'　/　Spotted '+d+'×・Dropped '+dr+'×' },
     resRank:{ ja:'あなたのランク：', en:'Your rank: ' },
     resTime:{ ja:tm=>'タイム '+tm, en:tm=>'Time '+tm },
   };
@@ -2161,19 +2162,25 @@ const CONFIG = {
   }
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
+    const t=gameTime;
+    let ri, score, head;
     if(cleared){
-      const t=gameTime, ri=computeRankIndex(t);
-      const score=Math.max(500, Math.round(600000/(t+30)) - statDetect*1500 - statDrop*700);  // 手放しのペナルティは軽め／必ず500以上は付く
-      const row=RANKS.map((r,i)=> i===ri
-        ? "<span style='font-size:46px;font-weight:900;color:"+RANK_COLORS[i]+";text-shadow:0 0 10px "+RANK_COLORS[i]+"'>"+r+"</span>"
-        : "<span style='font-size:26px;opacity:.35'>"+r+"</span>").join(" ");
-      resultInfo.innerHTML = tr('resCleared', fmtTime(t), statDetect, statDrop)
-        + "<br><span style='font-size:26px;font-weight:900;color:#ffd23a'>SCORE "+score.toLocaleString()+"</span>"
-        + "<br><br><div style='letter-spacing:6px'>"+row+"</div>"
-        + "<br><span style='font-size:15px;color:#9aa3ad'>"+tr('resRank')+"<b style='color:"+RANK_COLORS[ri]+"'>"+RANKS[ri]+"</b></span>";
+      ri=computeRankIndex(t);
+      score=Math.max(500, Math.round(600000/(t+30)) - statDetect*1500 - statDrop*700);  // 手放しのペナルティは軽め／必ず500以上
+      head=tr('resCleared', fmtTime(t), statDetect, statDrop);
     } else {
-      resultInfo.innerHTML = tr('resTime', fmtTime(gameTime));
+      ri = (t>=210)?4 : (t>=80)?5 : 6;                       // 失敗は生存時間でD/E/F
+      ri = Math.min(6, ri + (statDetect>=4?1:0));            // 見つかり過ぎはさらに下げる（上限F）
+      score=Math.max(0, Math.round(t*40) - statDetect*200 - statDrop*120);   // 生存時間ベース
+      head=tr('resFailed', fmtTime(t), statDetect, statDrop);
     }
+    const row=RANKS.map((r,i)=> i===ri
+      ? "<span style='font-size:46px;font-weight:900;color:"+RANK_COLORS[i]+";text-shadow:0 0 10px "+RANK_COLORS[i]+"'>"+r+"</span>"
+      : "<span style='font-size:26px;opacity:.35'>"+r+"</span>").join(" ");
+    resultInfo.innerHTML = head
+      + "<br><span style='font-size:26px;font-weight:900;color:#ffd23a'>SCORE "+score.toLocaleString()+"</span>"
+      + "<br><br><div style='letter-spacing:6px'>"+row+"</div>"
+      + "<br><span style='font-size:15px;color:#9aa3ad'>"+tr('resRank')+"<b style='color:"+RANK_COLORS[ri]+"'>"+RANKS[ri]+"</b></span>";
     resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden"); dashEl.classList.add("hidden"); missionEl.classList.add("hidden");
     toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none"; isDashing=false; speedLEl.style.opacity=0; speedREl.style.opacity=0;   // トイレ警告・疾走線を消す
     if(cleared) sfxClear(); else sfxOver(); }
@@ -2686,25 +2693,24 @@ const CONFIG = {
     g.font="bold 30px sans-serif"; g.fillText("WC", w/2, h-22);
     const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
   }
-  function buildToiletBlock(cx,cz,baseY,dirX,dirZ){   // 店舗のように壁へ埋め込む「正方形」のトイレ＋大きなトイレマーク＋青いサイン（旧・青い柱を統合）
+  function buildToiletBlock(cx,cz,baseY,dirX,dirZ){   // 壁に「付けた」正方形のトイレ＝背面を壁に、本体は通路側へ突き出す。大きなマーク＋青いサイン
     if(!_toiletMarkTexC) _toiletMarkTexC=toiletMarkTex();
     const g=new THREE.Group();
-    const S=T*0.72, D=T*0.68;                         // 正面は正方形(S×S)、本体は壁の中へ埋め込む
-    const wallZ=-T/2, front=wallZ+0.16, bodyZ=front-D/2;
+    const S=T*0.72, D=T*0.5;                          // 正面正方形(S×S)、壁から通路へDだけ突き出す
+    const wallZ=-T/2, bodyZ=wallZ+D/2, front=wallZ+D; // 背面=壁面 / 正面=通路側
     const body=new THREE.Mesh(new THREE.BoxGeometry(S,S,D), new THREE.MeshLambertMaterial({color:0xeef2f6}));
-    body.position.set(0,S/2,bodyZ); g.add(body);                                   // 白い本体（壁の中）
-    const frame=new THREE.Mesh(new THREE.BoxGeometry(S+0.36,S+0.36,0.3), new THREE.MeshLambertMaterial({color:0x1d4ed8}));
-    frame.position.set(0,S/2,front); g.add(frame);                                  // 青い枠（店構え）
+    body.position.set(0,S/2,bodyZ); g.add(body);                                   // 白い本体（壁から通路へ突き出す＝はっきり見える）
+    const frame=new THREE.Mesh(new THREE.BoxGeometry(S+0.34,S+0.34,0.26), new THREE.MeshLambertMaterial({color:0x1d4ed8}));
+    frame.position.set(0,S/2,front); g.add(frame);                                  // 青い枠（正面）
     const markM=new THREE.MeshBasicMaterial({map:_toiletMarkTexC}); markM.toneMapped=false;
-    const mark=new THREE.Mesh(new THREE.PlaneGeometry(S*0.92,S*0.92), markM); mark.position.set(0,S/2,front+0.17); g.add(mark); // 大きなトイレマーク（正面いっぱい）
-    // 上の青く光るサイン（=旧「青い柱」を統合した目印。天井を突き抜けない高さ）
+    const mark=new THREE.Mesh(new THREE.PlaneGeometry(S*0.9,S*0.9), markM); mark.position.set(0,S/2,front+0.16); g.add(mark);   // 正面いっぱいの大きなトイレマーク（通路を向く）
     const signT=toiletSignTex();
-    const top=new THREE.Mesh(new THREE.BoxGeometry(S+0.36,0.62,0.36), new THREE.MeshBasicMaterial({map:signT,toneMapped:false}));
-    top.position.set(0,S+0.5,front+0.05); g.add(top);
-    const blade=new THREE.Mesh(new THREE.PlaneGeometry(1.05,0.7), new THREE.MeshBasicMaterial({map:signT,side:THREE.DoubleSide,toneMapped:false}));
-    blade.position.set(0,S+0.5,front+0.95); blade.rotation.y=Math.PI/2; g.add(blade);  // 通路へ突き出す青いサイン（左右からも見える）
+    const top=new THREE.Mesh(new THREE.BoxGeometry(S+0.34,0.58,D+0.1), new THREE.MeshBasicMaterial({map:signT,toneMapped:false}));
+    top.position.set(0,S+0.4,bodyZ); g.add(top);                                    // 本体上の青いサイン帯
+    const blade=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.66), new THREE.MeshBasicMaterial({map:signT,side:THREE.DoubleSide,toneMapped:false}));
+    blade.position.set(0,S+0.4,front+0.05); blade.rotation.y=Math.PI/2; g.add(blade);  // 通路に沿って見える突き出しサイン
     g.position.set(cx,baseY,cz);
-    g.rotation.y=Math.atan2(dirX,dirZ);                // local +z を通路方向(dir)へ向ける
+    g.rotation.y=Math.atan2(dirX,dirZ);                // local +z を通路方向(dir)へ向ける（背面が壁）
     return g;
   }
   function randUndergroundTile(f, avoidStart, sx, sz){
