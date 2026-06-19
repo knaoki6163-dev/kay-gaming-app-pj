@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.129";
+  const APP_VERSION = "Ver.130";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -882,6 +882,15 @@ const CONFIG = {
     if(x<-R||x>W+R||z<-R||z>D+R) return false;     // リングの外
     if(x>-m&&x<W+m&&z>-m&&z<D+m) return false;      // 建物＋外壁の帯は対象外（建物にはゲート＝inExitPlazaからのみ入れる＝すり抜け防止）
     return true;
+  }
+  // 屋外(外周リング)の高さ：北(z=0)=地上1階(FH) ～ 南(z=D)=地上2階(2FH) のなだらかな坂
+  function outsideY(z){ return FH*(1 + Math.max(0,Math.min(1, z/(C.ROWS*T)))); }
+  // フロアを問わず (x,z) がいずれかの出口の広場内なら、その出口を返す
+  function anyExitPlaza(x,z){
+    if(x>2*T && x<(C.COLS-2)*T && z>2*T && z<(C.ROWS-2)*T) return null;
+    for(const e of exits){ const p=e.plaza; if(!p) continue;
+      if(x>=p.minX && x<=p.maxX && z>=p.minZ && z<=p.maxZ) return e; }
+    return null;
   }
   function allFloorTiles(f){ const a=[]; for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++)if(grids[f][y][x]===0)a.push({x,y}); return a; }
 
@@ -2002,24 +2011,21 @@ const CONFIG = {
 
   // 出口の外＝地上の広場（フラットに広がる。階段なし）
   function buildOutsidePlaza(mx,mz,ox,oy,base,pw){
+    // 改札前の短いエプロン（建物フロアの高さ）。その先は外周の坂(buildOutsideRings)＋遠景(buildOutsideScenery)が受け持つ
     pw=pw||T*0.85;
-    const len=T*12, pwz=pw+T*5;                       // 奥行きと、開口より広く広がる幅
+    const len=T*2.6, pwz=pw+T*3;
     const geo=ox!==0? new THREE.PlaneGeometry(len,pwz) : new THREE.PlaneGeometry(pwz,len);
     const floor=new THREE.Mesh(geo, plazaMat);
     floor.rotation.x=-Math.PI/2; floor.position.set(mx+ox*len/2, base+0.02, mz+oy*len/2); worldRoot.add(floor);
-    // 明るい空（霧を無視・大きめ）
-    const skyW=Math.max(T*9,pwz+T*2);
-    const sky=ox!==0? new THREE.BoxGeometry(0.5,T*9,skyW) : new THREE.BoxGeometry(skyW,T*9,0.5);
-    const wall=new THREE.Mesh(sky,skyMat); wall.position.set(mx+ox*(len-T), base+T*3, mz+oy*(len-T)); worldRoot.add(wall);
   }
-  // 各地上階の外周をぐるりと囲む広場リング（出口どうしが外でつながる道）＋周囲の街
+  // 駅の外周を「南=地上2階 / 北=地上1階」のなだらかな坂でぐるりとつなぐ（出口どうしが外で連続）
   function buildOutsideRings(){
-    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING;
-    for(let f=2; f<=NF; f++){
-      const base=(f-1)*FH, y=base+0.012;
-      const strip=(x0,x1,z0,z1)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,z1-z0), plazaMat); m.rotation.x=-Math.PI/2; m.position.set((x0+x1)/2,y,(z0+z1)/2); worldRoot.add(m); };
-      strip(-R,0,-R,D+R); strip(W,W+R,-R,D+R); strip(0,W,-R,0); strip(0,W,D,D+R);   // 西・東・北・南
-    }
+    const W=C.COLS*T, D=C.ROWS*T, R=C.OUTSIDE_RING, slope=Math.atan(FH/D);
+    const flat=(x0,x1,z0,z1,y)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,z1-z0), plazaMat); m.rotation.x=-Math.PI/2; m.position.set((x0+x1)/2,y+0.012,(z0+z1)/2); worldRoot.add(m); };
+    flat(-R,W+R,-R,0,FH);            // 北の端＝地上1階(FH)
+    flat(-R,W+R,D,D+R,2*FH);         // 南の端＝地上2階(2FH)
+    const ramp=(xc,wx)=>{ const m=new THREE.Mesh(new THREE.PlaneGeometry(wx,D), plazaMat); m.rotation.x=-Math.PI/2-slope; m.position.set(xc,1.5*FH+0.012,D/2); worldRoot.add(m); };
+    ramp(-R/2,R); ramp(W+R/2,R);     // 東西の坂（z=0でFH, z=Dで2FH）
     buildOutsideScenery(W,D,R);
   }
   let _cityMats=null;
@@ -2031,34 +2037,30 @@ const CONFIG = {
     }
     const t=new THREE.CanvasTexture(cv); t.anisotropy=2; return t;
   }
-  // 駅の外＝周囲の街（ビル群・街灯・植栽）と遠景の空。リングの外側に作り込む
+  // 駅の外＝周囲の街（ビル群・街灯・植栽）と遠景の空。外周の坂(outsideY)に合わせて配置
   function buildOutsideScenery(W,D,R){
-    const gy=FH;                                   // 屋外の地面＝地上1階の高さ
     if(!_cityMats) _cityMats=["#8f9aa6","#7a8794","#9aa6b0","#6f7c89","#aab3bb"].map(c=>{
       const m=new THREE.MeshBasicMaterial({map:cityWallTex(c)}); m.fog=false; m.toneMapped=false; return m; });
-    const RS=R+46;                                 // 空までの距離（街の奥行き）
-    const skyM=skyMat, sh=T*18;
-    const sky=(cx,cz,sx,sz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sh,sz),skyM); m.position.set(cx,gy+sh/2-FH*0.5,cz); worldRoot.add(m); };
+    const RS=R+46, skyM=skyMat, sh=T*20;
+    const sky=(cx,cz,sx,sz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sh,sz),skyM); m.position.set(cx,outsideY(cz)+sh/2-FH*0.7,cz); worldRoot.add(m); };
     sky(-RS,D/2,1,D+2*RS); sky(W+RS,D/2,1,D+2*RS); sky(W/2,-RS,W+2*RS,1); sky(W/2,D+RS,W+2*RS,1);
-    // ビル群：4辺の外側の帯に並べる
-    const bldg=(cx,cz,wx,wz)=>{ const h=16+Math.random()*46, m=_cityMats[(Math.random()*_cityMats.length)|0];
+    // ビル群：4辺の外側の帯に並べる（足元は坂の高さに合わせる）
+    const bldg=(cx,cz,wx,wz)=>{ const gy=outsideY(cz), h=16+Math.random()*46, m=_cityMats[(Math.random()*_cityMats.length)|0];
       const b=new THREE.Mesh(new THREE.BoxGeometry(wx,h,wz),m); b.position.set(cx,gy+h/2,cz); worldRoot.add(b);
       const roof=new THREE.Mesh(new THREE.BoxGeometry(wx*0.5,1.5,wz*0.5),m); roof.position.set(cx,gy+h+0.75,cz); worldRoot.add(roof); };
     const rowH=(x0,x1,zc,depth)=>{ for(let x=x0; x<x1; x+= 12+Math.random()*8){ const wx=9+Math.random()*7; bldg(x+wx/2, zc+(Math.random()-0.5)*8, wx, depth+Math.random()*5); } };
     const rowV=(z0,z1,xc,depth)=>{ for(let z=z0; z<z1; z+= 12+Math.random()*8){ const wz=9+Math.random()*7; bldg(xc+(Math.random()-0.5)*8, z+wz/2, depth+Math.random()*5, wz); } };
     rowH(-R, W+R, -(R+18), 12); rowH(-R, W+R, D+R+18, 12);    // 北・南
     rowV(-R, D+R, -(R+18), 12); rowV(-R, D+R, W+R+18, 12);    // 西・東
-    // 街灯・植栽（各地上階のリングの縁に等間隔）
+    // 街灯・植栽（外周の坂の縁に等間隔。高さは坂に追従）
     const poleM=new THREE.MeshLambertMaterial({color:0x5a626b}), lampM=new THREE.MeshBasicMaterial({color:0xfff2c4}); lampM.toneMapped=false;
     const bushM=new THREE.MeshLambertMaterial({color:0x3f7d46});
-    for(let f=2; f<=NF; f++){ const base=(f-1)*FH;
-      const lamp=(x,z)=>{ const p=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,3.2,6),poleM); p.position.set(x,base+1.6,z); worldRoot.add(p);
-        const l=new THREE.Mesh(new THREE.SphereGeometry(0.34,8,8),lampM); l.position.set(x,base+3.3,z); worldRoot.add(l); }; // 光源は増やさず発光球で表現
-      const bush=(x,z)=>{ const b=new THREE.Mesh(new THREE.SphereGeometry(0.7+Math.random()*0.4,7,6),bushM); b.position.set(x,base+0.5,z); worldRoot.add(b); };
-      const er=R*0.45;   // 縁の内側
-      for(let x=4; x<W; x+=16){ lamp(x,-er); lamp(x,D+er); if((x/16|0)%2) { bush(x+6,-er); bush(x+6,D+er); } }
-      for(let z=4; z<D; z+=16){ lamp(-er,z); lamp(W+er,z); if((z/16|0)%2) { bush(-er,z+6); bush(W+er,z+6); } }
-    }
+    const lamp=(x,z)=>{ const gy=outsideY(z); const p=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,3.2,6),poleM); p.position.set(x,gy+1.6,z); worldRoot.add(p);
+      const l=new THREE.Mesh(new THREE.SphereGeometry(0.34,8,8),lampM); l.position.set(x,gy+3.3,z); worldRoot.add(l); };
+    const bush=(x,z)=>{ const gy=outsideY(z); const b=new THREE.Mesh(new THREE.SphereGeometry(0.7+Math.random()*0.4,7,6),bushM); b.position.set(x,gy+0.5,z); worldRoot.add(b); };
+    const er=R*0.45;
+    for(let x=4; x<W; x+=16){ lamp(x,-er); lamp(x,D+er); if((x/16|0)%2){ bush(x+6,-er); bush(x+6,D+er); } }
+    for(let z=4; z<D; z+=16){ lamp(-er,z); lamp(W+er,z); if((z/16|0)%2){ bush(-er,z+6); bush(W+er,z+6); } }
   }
 
   // ---------- 入力 ----------
@@ -2200,7 +2202,7 @@ const CONFIG = {
   // ---------- 移動 ----------
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
-    if(inExitPlaza(x,z,player.level) || inOutsideRing(x,z,player.level)) return true;  // 改札の外の広場＆外周リングは歩ける
+    if(anyExitPlaza(x,z) || inOutsideRing(x,z,2)) return true;  // 改札の外の広場＆外周の坂リングは（階を問わず）歩ける
     // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
     if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
@@ -2253,7 +2255,19 @@ const CONFIG = {
     if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
       if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
     const si=stairInfo(player.x,player.z,player.level);
-    if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; } else { player.y=(player.level-1)*FH; }
+    if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; }
+    else {
+      const pe=anyExitPlaza(player.x,player.z);
+      if(pe){ // 改札前の広場：建物フロア(ゲート)↔外周の坂をなめらかにつなぐ
+        player.level=pe.level;
+        const fb=(pe.level-1)*FH, outward=(player.x-pe.x)*pe.ox+(player.z-pe.z)*pe.oy;
+        const tt=Math.max(0,Math.min(1, outward/(T*2.5)));
+        player.y = fb*(1-tt) + outsideY(player.z)*tt;
+      } else if(inOutsideRing(player.x,player.z,2)){ // 外周の坂（南=地上2階 / 北=地上1階）
+        player.y = outsideY(player.z);
+        player.level = (player.y>=1.5*FH)?NF:2;
+      } else { player.y=(player.level-1)*FH; }
+    }
     if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
     camera.position.set(player.x, player.y+(crouching?C.CROUCH_EYE:C.EYE_HEIGHT), player.z);
   }
