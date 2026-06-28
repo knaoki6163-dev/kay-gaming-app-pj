@@ -5,34 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>駅の出口探索ゲーム</title>
 <style>
+  :root {
+    --panel: #252525;
+    --panel-border: #3d3d3d;
+    --accent: #4a90e2;
+  }
+  * { box-sizing: border-box; }
   html, body {
     margin: 0;
     padding: 0;
-    background: #1a1a1a;
+    min-height: 100%;
+    background: radial-gradient(circle at top, #303030 0%, #171717 62%);
     color: #eee;
     font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
     text-align: center;
     user-select: none;
     -webkit-user-select: none;
-    touch-action: none;
+  }
+  body {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 100vh;
+    padding: 12px;
   }
   #title {
-    font-size: 18px;
-    margin: 8px 0;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    color: #fff;
+    font-size: clamp(16px, 4vw, 22px);
     font-weight: bold;
+    line-height: 1.35;
+    margin: 0;
+    max-width: min(100%, 640px);
+    padding: 10px 14px;
+    width: 100%;
   }
   #info {
-    font-size: 13px;
-    color: #aaa;
-    margin-bottom: 6px;
+    color: #c8c8c8;
+    font-size: clamp(12px, 3vw, 14px);
+    line-height: 1.45;
+    margin: 0 0 4px;
+    max-width: min(100%, 640px);
   }
   #wrap {
     position: relative;
     display: inline-block;
+    max-width: 100%;
   }
   canvas {
     background: #2b2b2b;
-    border: 2px solid #444;
+    border: 2px solid #555;
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.35);
+    display: block;
+    max-height: calc(100vh - 130px);
     max-width: 100%;
     height: auto;
     touch-action: none;
@@ -44,9 +74,11 @@
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    background: rgba(0,0,0,0.65);
-    font-size: 40px;
+    background: rgba(0,0,0,0.72);
+    border-radius: 10px;
+    font-size: clamp(32px, 9vw, 56px);
     font-weight: bold;
+    padding: 20px;
   }
   #overlay.show { display: flex; }
   #overlay button {
@@ -83,7 +115,7 @@ const CONFIG = {
 <!-- ============================================================ -->
 
 <div id="title">読み込み中...</div>
-<div id="info">矢印キー / WASD で移動。スマホは画面ドラッグで移動。</div>
+<div id="info">矢印キー / WASD で移動。スマホはキャンバス内をドラッグ。Rキーでもリスタートできます。</div>
 
 <div id="wrap">
   <canvas id="game"></canvas>
@@ -177,7 +209,7 @@ const CONFIG = {
   }
 
   // ----- ゲーム状態 -----
-  let player, chaser, exits, correctExitNo, state;
+  let player, chaser, exits, correctExitNo, state, titleResetTimer;
   const PLAYER_R = C.TILE * 0.3;
   const CHASER_R = C.TILE * 0.3;
 
@@ -213,6 +245,9 @@ const CONFIG = {
     }
 
     // 正しい出口をランダムに決定
+    if (exits.length === 0) {
+      throw new Error("出口を配置できません。迷路サイズまたは出口数を確認してください。");
+    }
     correctExitNo = exits[Math.floor(Math.random() * exits.length)].no;
 
     // 追跡者はプレイヤーから遠い通路に配置（出口とは別マス）
@@ -226,6 +261,7 @@ const CONFIG = {
     chaser = { x: cc.x, y: cc.y, r: CHASER_R };
 
     state = "play";
+    clearTimeout(titleResetTimer);
     overlay.classList.remove("show");
     titleEl.textContent = "目標：" + correctExitNo + "番出口へ脱出せよ！";
   }
@@ -234,7 +270,8 @@ const CONFIG = {
   const keys = {};
   window.addEventListener("keydown", e => {
     const k = e.key.toLowerCase();
-    if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault();
+    if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k)) e.preventDefault();
+    if (k === "r" && state !== "play") setup();
     keys[k] = true;
   });
   window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
@@ -251,12 +288,19 @@ const CONFIG = {
       y: (t.clientY - rect.top) * scaleY,
     };
   }
-  canvas.addEventListener("touchstart", e => { e.preventDefault(); setTouchFromEvent(e); }, { passive: false });
-  canvas.addEventListener("touchmove",  e => { e.preventDefault(); setTouchFromEvent(e); }, { passive: false });
-  canvas.addEventListener("touchend",   e => { e.preventDefault(); touchTarget = null; }, { passive: false });
-  canvas.addEventListener("mousedown", e => { setTouchFromEvent(e); });
-  canvas.addEventListener("mousemove", e => { if (e.buttons) setTouchFromEvent(e); });
-  window.addEventListener("mouseup", () => { touchTarget = null; });
+  canvas.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    setTouchFromEvent(e);
+  });
+  canvas.addEventListener("pointermove", e => {
+    if (e.buttons || e.pointerType === "touch") {
+      e.preventDefault();
+      setTouchFromEvent(e);
+    }
+  });
+  canvas.addEventListener("pointerup", () => { touchTarget = null; });
+  canvas.addEventListener("pointercancel", () => { touchTarget = null; });
 
   // ----- 移動処理（軸ごとに分けて壁すべりできるように） -----
   function moveEntity(ent, dx, dy) {
@@ -286,31 +330,49 @@ const CONFIG = {
     }
   }
 
+  function tileAt(ent) {
+    return { x: Math.floor(ent.x / C.TILE), y: Math.floor(ent.y / C.TILE) };
+  }
+
+  function nextStepToward(start, goal) {
+    const queue = [start];
+    const cameFrom = new Map([[start.x + "," + start.y, null]]);
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+
+    while (queue.length) {
+      const cur = queue.shift();
+      if (cur.x === goal.x && cur.y === goal.y) break;
+      for (const [dx, dy] of dirs) {
+        const next = { x: cur.x + dx, y: cur.y + dy };
+        const key = next.x + "," + next.y;
+        if (!isFloor(next.x, next.y) || cameFrom.has(key)) continue;
+        cameFrom.set(key, cur);
+        queue.push(next);
+      }
+    }
+
+    const goalKey = goal.x + "," + goal.y;
+    if (!cameFrom.has(goalKey)) return tileCenter(goal.x, goal.y);
+
+    let cur = goal;
+    let prev = cameFrom.get(goalKey);
+    while (prev && !(prev.x === start.x && prev.y === start.y)) {
+      cur = prev;
+      prev = cameFrom.get(cur.x + "," + cur.y);
+    }
+    return tileCenter(cur.x, cur.y);
+  }
+
   function updateChaser() {
-    // プレイヤーへ素直に向かう（軸ごとに動くので壁角で引っかかりにくい）
-    let dx = player.x - chaser.x;
-    let dy = player.y - chaser.y;
+    // 迷路上の最短経路で追う。壁越しに直進して角で固まる不具合を防ぐ。
+    const target = nextStepToward(tileAt(chaser), tileAt(player));
+    let dx = target.x - chaser.x;
+    let dy = target.y - chaser.y;
     const len = Math.hypot(dx, dy);
     if (len > 0.001) {
       dx = dx / len * C.CHASER_SPEED;
       dy = dy / len * C.CHASER_SPEED;
-
-      const beforeX = chaser.x, beforeY = chaser.y;
       moveEntity(chaser, dx, dy);
-
-      // 壁で完全に詰まったら、空いている軸方向へ少しずらして回り込む
-      if (chaser.x === beforeX && chaser.y === beforeY) {
-        if (canMove(chaser.x + dx, chaser.y, chaser.r)) chaser.x += dx;
-        else if (canMove(chaser.x, chaser.y + dy, chaser.r)) chaser.y += dy;
-        else {
-          // 縦横どちらかへ強制的に1歩
-          const altX = dx !== 0 ? 0 : C.CHASER_SPEED * (Math.random() < 0.5 ? 1 : -1);
-          const altY = dy !== 0 ? 0 : C.CHASER_SPEED * (Math.random() < 0.5 ? 1 : -1);
-          if (canMove(chaser.x + altX, chaser.y + altY, chaser.r)) {
-            chaser.x += altX; chaser.y += altY;
-          }
-        }
-      }
     }
   }
 
@@ -325,7 +387,11 @@ const CONFIG = {
       if (dist(player, e) < C.TILE * 0.4) {
         if (e.no === correctExitNo) endGame(true);
         else {
-          // 間違った出口は通れない（軽く押し戻す）。メッセージは出さずシンプルに。
+          titleEl.textContent = e.no + "番出口は違う！ 目標：" + correctExitNo + "番出口";
+          clearTimeout(titleResetTimer);
+          titleResetTimer = setTimeout(() => {
+            if (state === "play") titleEl.textContent = "目標：" + correctExitNo + "番出口へ脱出せよ！";
+          }, 1200);
         }
       }
     }
