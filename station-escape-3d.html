@@ -132,11 +132,9 @@ const CONFIG = {
   MOVE_SPEED: 6.075,    // 通常速度（手ぶら歩き）※さらに0.9倍に減速
   WALK_SPEED: 4.86,     // 酔っ払いを連れて歩く速度（さらに0.9倍に減速）
   DASH_SPEED: 8.0,      // ダッシュ（W連打）の速度
-  DASH_DUR: 10,         // ダッシュの持続上限(秒)。使い切ると回復待ち
-  DASH_PARTIAL_SPEED: 7.0, // 回復途中で使える弱ダッシュの速度
-  DASH_PARTIAL_AT: 10,  // ダッシュ終了から何秒後に弱ダッシュが使えるか
-  DASH_PARTIAL_DUR: 5,  // 弱ダッシュの持続(秒)
-  DASH_FULL_AT: 20,     // ダッシュ終了から何秒で通常ダッシュが完全復活するか
+  DASH_DUR: 10,         // ダッシュ・スタミナの満タン量(秒)＝合計でこの秒数だけ走れる
+  DASH_MIN_START: 1.0,  // ダッシュを「新たに」始めるのに必要な残量(秒)。0付近での点滅防止
+  DASH_FULL_AT: 20,     // 空から満タンまでの回復秒数（途中でやめた場合は残量からそのぶん早く回復）
   DRUNK_SPEED: 6.5,     // 酔っ払いがついてくる速度（連れて歩いても離れない様に歩行より少し速い）
   DRUNK_TOUCH: 1.9,     // この距離まで近づくと「連れる」
   DRUNK_SEPARATE: 8.5,  // 連れている時、これ以上離れると「はぐれ」
@@ -330,7 +328,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.134";
+  const APP_VERSION = "Ver.135";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -368,12 +366,11 @@ const CONFIG = {
     enChase:{ ja:'追跡中！', en:'CHASING!' }, enWander:{ ja:'徘徊', en:'Patrol' },
     crouchTag:{ ja:'　/　🫥しゃがみ中', en:'　/　🫥Crouching' },
     controls:{ ja:'WASD移動・C:しゃがむ・マウス視点', en:'WASD move・C crouch・Mouse look' },
-    dashFull:{ ja:s=>'⚡ダッシュ8.0  残'+s+'秒', en:s=>'⚡Dash 8.0  '+s+'s left' },
-    dashPartial:{ ja:s=>'⚡弱ダッシュ7.0  残'+s+'秒', en:s=>'⚡Weak dash 7.0  '+s+'s left' },
+    dashFull:{ ja:s=>'⚡ダッシュ中  残'+s+'秒', en:s=>'⚡Dashing  '+s+'s left' },
     dashCool:{ ja:(lab,s)=>'ダッシュ回復中… '+lab+s+'秒', en:(lab,s)=>'Dash recovering… '+lab+s+'s' },
-    dashReadyFull:{ ja:'⚡ダッシュ8.0 使用可', en:'⚡Dash 8.0 ready' },
-    dashReadyWeak:{ ja:s=>'⚡弱ダッシュ7.0 使用可（通常まで'+s+'秒）', en:s=>'⚡Weak 7.0 ready (full in '+s+'s)' },
-    dashCoolWeak:{ ja:s=>'ダッシュ回復中… 弱まで'+s+'秒', en:s=>'Dash recovering… weak in '+s+'s' },
+    dashReadyFull:{ ja:'⚡ダッシュ満タン', en:'⚡Dash full' },
+    dashReadyWeak:{ ja:s=>'⚡ダッシュ可 残'+s+'秒（回復中）', en:s=>'⚡Dash ready '+s+'s (recharging)' },
+    dashCoolWeak:{ ja:s=>'ダッシュ回復中… あと'+s+'秒で使用可', en:s=>'Dash recharging… ready in '+s+'s' },
     // 酔っ払いの一時メッセージ
     msgDrop:{ ja:'ダッシュで手が離れた！もう一度連れに行け', en:'Dashing made you drop him! Go get him again' },
     msgToiletWarn:{ ja:'酔っ払いがソワソワし始めた…トイレが近いぞ！', en:'The drunk is getting restless… he needs a toilet soon!' },
@@ -2020,7 +2017,7 @@ const CONFIG = {
         gm.position.set(gx, base+0.55, gz); worldRoot.add(gm);
         const bar=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.42:0.16,0.12,perpy?0.42:0.16), gleam);
         bar.position.set(gx, base+1.05, gz); worldRoot.add(bar);
-        addObs(ef, gx, gz, 0.26);   // 改札機は通り抜け不可（レーンの間を通る）
+        addObs(ef, gx, gz, 0.22);   // 改札機は通り抜け不可（レーンの間を通る。見た目より広く塞がない）
       }
       // 通り抜け可能な広場の範囲（プレイヤー・通行人が出入りできる外のスペース）。owidは改札と共通(開口幅)
       const dep=T*3.0;
@@ -2181,7 +2178,7 @@ const CONFIG = {
   // ---------- 入力 ----------
   const player={x:0,z:0,y:0,yaw:0,pitch:0,level:1};
   const keys={}; let running=false, locked=false, userMode=false, stepAcc=0, stepNext=0.2, alertPrev=false, crouching=false, wMash=0, lostT=0;
-  let dashBursting=false, dashBurstSpeed=8.0, dashBurstLeft=0, dashRecT=20, dashGrace=0;   // ダッシュ・スタミナ（実行中バースト＋直近終了からの回復計時）
+  let dashStam=CONFIG.DASH_DUR, dashActive=false;   // ダッシュ・スタミナ（ゲージ制：残量ぶん走れる／途中でやめても残りは保持され徐々に回復）
   let isDashing=false;   // いまダッシュ中か（疾走感の白線表示用）
   addEventListener("keydown",e=>{const k=e.key.toLowerCase();keys[k]=true;
     if((k==="w"||k==="arrowup") && !e.repeat) wMash=Math.min(wMash+1, 5);   // W連打の検出（押し直しのみ＝長押しは加算しない）
@@ -2320,13 +2317,13 @@ const CONFIG = {
   function playerCanStand(x,z){
     const r=PLAYER_R, out=(X,Z)=>anyExitPlaza(X,Z)||inOutsideRing(X,Z,2);
     // 万一障害物の内側/縁に居る場合は移動を許可（縁のデッドバンドで固まらない保険）
-    const inside=obstacleHit(player.x,player.z,0.45,player.level) || outsideHit(player.x,player.z,0.35);
-    if(!inside && outsideHit(x,z,0.35)) return false;      // 屋外の設置物（街灯/ベンチ/タクシー等）はすり抜け不可
+    const inside=obstacleHit(player.x,player.z,0.32,player.level) || outsideHit(player.x,player.z,0.3);
+    if(!inside && outsideHit(x,z,0.3)) return false;       // 屋外の設置物（街灯/ベンチ/タクシー等）はすり抜け不可
     if(out(x-r,z-r)&&out(x+r,z-r)&&out(x-r,z+r)&&out(x+r,z+r))
-      return inside || !obstacleHit(x,z,0.45,player.level); // 体の四隅すべてが屋外なら可。ただし改札機などは広場側からも通れない
-    // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
+      return inside || !obstacleHit(x,z,0.32,player.level); // 体の四隅すべてが屋外なら可。ただし改札機などは広場側からも通れない
+    // 通行人はプレイヤーを絶対に止めない（避けて道を開ける）＝人混みでも必ず通れる
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
-    if(!inside && obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店／トイレ・自販機・改札機
+    if(!inside && obstacleHit(x,z,0.32,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店／トイレ・自販機・改札機（余白は見た目ぴったりに）
     return true;
   }
   // その位置に立った時の足元の高さ（updatePlayer の高さ決定と同じ規則。状態は変更しない）
@@ -2339,40 +2336,26 @@ const CONFIG = {
     return (player.level-1)*FH;
   }
   // プレイヤー周囲の通行人の密度（人混みで遅くなる＝動きにくいが、止まりはしない。少人数なら減速なし）
-  function crowdDrag(){
-    let near=0;
-    for(const p of pedestrians){ if(p.level===player.level){ const dx=p.x-player.x, dz=p.z-player.z; if(dx*dx+dz*dz<4.0) near++; } } // 2m以内
-    const eff=Math.max(0, near-1);   // 1人くらいは素通り、密集すると減速
-    return 1/(1 + eff*0.4);
-  }
   function updatePlayer(dt){
     camera.rotation.set(player.pitch,player.yaw,0);
     camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize(); right.crossVectors(fwd,up).normalize();
     wMash=Math.max(0, wMash-dt*3.0); if(lostT>0) lostT-=dt;   // W連打メーターの減衰（毎秒3回より速く連打で発動）
     const mashing = wMash>=1.8;                              // 連打中＝ダッシュ意思
     crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
-    // ダッシュ・スタミナ：ダッシュ/弱ダッシュのどれを使っても「そのダッシュ終了」から計時し直す。
-    //   終了10秒後＝弱ダッシュ(7.0)が使える / 終了20秒後＝通常ダッシュ(8.0)。よって通常は常に直近ダッシュの20秒後のみ。
+    // ダッシュ・スタミナ（ゲージ制）：残量ぶんだけ走れる。途中でやめても残りは0にならず保持され、
+    // 走っていない間にそこから徐々に回復する（例：満タン10秒で3秒走って歩きに戻れば、残り7秒はすぐ使える）
     const wantDash = mashing && !carrying && !crouching;
-    let dashAvail=0;                                          // いま出せるダッシュ速度（0=不可）
-    if(dashBursting){                                         // ダッシュ実行中
-      if(wantDash && dashBurstLeft>0){ dashAvail=dashBurstSpeed; dashBurstLeft-=dt; dashGrace=0;
-        if(dashBurstLeft<=0){ dashBurstLeft=0; dashBursting=false; dashRecT=0; } }   // 使い切り→終了＝回復開始
-      else { dashGrace+=dt; if(dashGrace>0.4){ dashBursting=false; dashRecT=0; } }   // 連打が0.4秒途切れたら終了＝回復開始
-    } else {                                                  // 回復待ち（直近ダッシュ終了からの経過）
-      dashRecT+=dt;
-      if(wantDash){
-        if(dashRecT>=C.DASH_FULL_AT){ dashBursting=true; dashBurstSpeed=C.DASH_SPEED; dashBurstLeft=C.DASH_DUR-dt; dashGrace=0; dashAvail=C.DASH_SPEED; }
-        else if(dashRecT>=C.DASH_PARTIAL_AT){ dashBursting=true; dashBurstSpeed=C.DASH_PARTIAL_SPEED; dashBurstLeft=C.DASH_PARTIAL_DUR-dt; dashGrace=0; dashAvail=C.DASH_PARTIAL_SPEED; }
-      }
-    }
-    const dashing = wantDash && dashAvail>0; isDashing=dashing;
+    if(dashActive){ if(!wantDash || dashStam<=0) dashActive=false; }        // やめる/使い切り→残量は保持
+    else if(wantDash && dashStam>=C.DASH_MIN_START) dashActive=true;        // 残量が少なすぎる時だけ始動不可（点滅防止）
+    if(dashActive) dashStam=Math.max(0, dashStam-dt);                       // ダッシュ中は消費
+    else dashStam=Math.min(C.DASH_DUR, dashStam + dt*C.DASH_DUR/C.DASH_FULL_AT);   // それ以外は徐々に回復
+    const dashing = dashActive; isDashing=dashing;
     let spd;
     if(crouching) spd=C.CROUCH_SPEED;
     else if(carrying){
       if(mashing){ dropDrunk(); spd=C.MOVE_SPEED; }          // 連れて連打→手が離れて通常速度に
       else spd=C.WALK_SPEED;                                 // 連れて歩き＝はぐれない
-    } else spd = dashing ? dashAvail : C.MOVE_SPEED;          // 手ぶら：ダッシュ可なら9.0/8.0 / それ以外=通常
+    } else spd = dashing ? C.DASH_SPEED : C.MOVE_SPEED;      // 手ぶら：ダッシュ中=8.0 / それ以外=通常
     let mf=0,ms=0;
     if(keys["w"]||keys["arrowup"]||mashing)mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;  // 連打中は前進継続
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
@@ -2380,9 +2363,17 @@ const CONFIG = {
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
       // 高さの瞬間ジャンプ防止：階段のランプへ横から乗る/途中から飛び降りる移動はブロック
-      const okY=(X,Z)=> Math.abs(standYAt(X,Z)-player.y) <= 1.1;
-      if(playerCanStand(player.x+vx,player.z) && okY(player.x+vx,player.z)) player.x+=vx;
-      if(playerCanStand(player.x,player.z+vz) && okY(player.x,player.z+vz)) player.z+=vz;
+      const can=(X,Z)=> playerCanStand(X,Z) && Math.abs(standYAt(X,Z)-player.y) <= 1.1;
+      let moved=false;
+      if(can(player.x+vx,player.z)){ player.x+=vx; moved=true; }
+      if(can(player.x,player.z+vz)){ player.z+=vz; moved=true; }
+      if(!moved){   // くさび詰まり対策：45°の横滑りを試す＝柱/改札機/売店の角や人混みの間でも必ず抜けられる
+        const ca=0.70710678, sa=0.70710678;
+        for(const sgn of [1,-1]){
+          const rx=vx*ca - sgn*vz*sa, rz=sgn*vx*sa + vz*ca;
+          if(can(player.x+rx,player.z+rz)){ player.x+=rx; player.z+=rz; break; }
+        }
+      }
     }
     if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
       if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
@@ -2576,8 +2567,8 @@ const CONFIG = {
     // 階段(乗車)中はプレイヤー回避をしない＝手すりに押し込まれて止まる/合体するのを防ぐ（プレイヤーは素通りできる）
     if(!allowStair && p.level===player.level){
       const dx=p.x-player.x, dz=p.z-player.z, d=Math.hypot(dx,dz);
-      if(d<C.PED_AVOID_R && d>0.001){ const w=(C.PED_AVOID_R-d)/C.PED_AVOID_R*2.0; vx+=dx/d*w; vz+=dz/d*w;
-        if(d<1.1){ vx=dx/d; vz=dz/d; dodge=true; } }
+      if(d<C.PED_AVOID_R && d>0.001){ const w=(C.PED_AVOID_R-d)/C.PED_AVOID_R*2.2; vx+=dx/d*w; vz+=dz/d*w;
+        if(d<1.35){ vx=dx/d; vz=dz/d; dodge=true; } }   // 早め・強めに道を開ける＝人混みでもプレイヤーが必ず通れる
     }
     const L=Math.hypot(vx,vz); if(L>0.0001){ vx/=L; vz/=L; }
     const sp= dodge? C.PED_DODGE_SPEED
@@ -2937,7 +2928,7 @@ const CONFIG = {
   }
   function buildDrunkAndKonbini(sx,sz,slevel){
     drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
-    dashBursting=false; dashBurstLeft=0; dashGrace=0; dashRecT=C.DASH_FULL_AT;   // 開始時は通常ダッシュ使用可
+    dashActive=false; dashStam=C.DASH_DUR;   // 開始時はスタミナ満タン
     metEnemyUnderground=false;   // 地下の遭遇フラグをリセット
     // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
@@ -3295,13 +3286,12 @@ const CONFIG = {
       floorEl.textContent = tr('here', floorName(player.level));
       mapLabel.textContent = (lang==="en"?"MAP ("+floorName(player.level)+")":"MAP（"+floorName(player.level)+"）");
       subEl.style.display="none";   // プレイ中は「敵:徘徊／WASD移動…」の補助表示を消す
-      // ダッシュ・スタミナのゲージ
-      let dfrac, dcol, dtxt;
-      if(dashBursting && dashBurstSpeed>=C.DASH_SPEED){ dfrac=dashBurstLeft/C.DASH_DUR; dcol="#33d17a"; dtxt=tr('dashFull',Math.ceil(dashBurstLeft)); }
-      else if(dashBursting){ dfrac=dashBurstLeft/C.DASH_PARTIAL_DUR; dcol="#f0a93a"; dtxt=tr('dashPartial',Math.ceil(dashBurstLeft)); }
-      else if(dashRecT>=C.DASH_FULL_AT){ dfrac=1; dcol="#33d17a"; dtxt=tr('dashReadyFull'); }              // 通常ダッシュ使用可
-      else if(dashRecT>=C.DASH_PARTIAL_AT){ dfrac=1; dcol="#f0a93a"; dtxt=tr('dashReadyWeak',Math.ceil(C.DASH_FULL_AT-dashRecT)); }  // 弱ダッシュ使用可（通常まで）
-      else { dfrac=dashRecT/C.DASH_PARTIAL_AT; dcol="#7a8088"; dtxt=tr('dashCoolWeak',Math.ceil(C.DASH_PARTIAL_AT-dashRecT)); }       // 回復中（弱まで）
+      // ダッシュ・スタミナのゲージ（残量そのまま表示。途中でやめても残りが見える）
+      let dfrac=dashStam/C.DASH_DUR, dcol, dtxt;
+      if(isDashing){ dcol="#33d17a"; dtxt=tr('dashFull', dashStam.toFixed(1)); }                            // ダッシュ中（残量表示）
+      else if(dashStam>=C.DASH_DUR-0.05){ dcol="#33d17a"; dtxt=tr('dashReadyFull'); }                       // 満タン
+      else if(dashStam>=C.DASH_MIN_START){ dcol="#8ed17a"; dtxt=tr('dashReadyWeak', dashStam.toFixed(1)); } // 使用可（回復中）
+      else { dcol="#7a8088"; dtxt=tr('dashCoolWeak', Math.ceil((C.DASH_MIN_START-dashStam)*C.DASH_FULL_AT/C.DASH_DUR)); }  // 始動可能まで回復中
       dashFillEl.style.width=(Math.max(0,Math.min(1,dfrac))*100)+"%"; dashFillEl.style.background=dcol; dashTxtEl.textContent=dtxt;
       // ダッシュ中は画面左右に薄い白線で疾走感
       const sp = isDashing ? (0.55+0.25*Math.abs(Math.sin(flick*22))) : 0;
@@ -3339,7 +3329,8 @@ const CONFIG = {
     get toilets(){return toilets}, get exits(){return exits}, get stairs(){return stairs},
     get pedestrians(){return pedestrians}, get konbini(){return konbini}, get carrying(){return carrying},
     pcs:(x,z)=>playerCanStand(x,z), obst:(x,z,e,f)=>obstacleHit(x,z,e,f), standY:(x,z)=>standYAt(x,z),
-    stair:(x,z,l)=>stairInfo(x,z,l), C, T, FH };
+    stair:(x,z,l)=>stairInfo(x,z,l), get dashStam(){return dashStam}, get dashActive(){return dashActive},
+    get gameTime(){return gameTime}, C, T, FH };
   setupTouch(); loop();
 })();
 </script>
