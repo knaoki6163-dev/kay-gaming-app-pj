@@ -330,7 +330,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.132";
+  const APP_VERSION = "Ver.133";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -1088,10 +1088,18 @@ const CONFIG = {
   let groundKiosks=[];  // 地上の売店（円の当たり判定＋来客の目的地）
   let kioskFields={};   // 各売店への経路場
   let exitField=null;   // 地上の全出口へ向かう経路場（出入りを激しくする用）
+  let extraObs={};      // フロアごとの追加障害物（トイレ/自販機/コンビニ/改札機）＝すり抜け防止
+  let outsideObs=[];    // 屋外リングの障害物（街灯/樹木/ベンチ/タクシー等）＝プレイヤー用
+  function addObs(f,x,z,r){ (extraObs[f]=extraObs[f]||[]).push({x,z,r}); }
   function obstacleHit(x,z,extra,f){
     const list = (f===1) ? platObstacles : (f===NF ? groundKiosks : null);
-    if(!list) return false;
-    for(const o of list){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; }
+    if(list) for(const o of list){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; }
+    const ex=extraObs[f];
+    if(ex) for(const o of ex){ if(Math.hypot(x-o.x,z-o.z) < o.r+extra) return true; }
+    return false;
+  }
+  function outsideHit(x,z,extra){
+    for(const o of outsideObs){ const dx=x-o.x, dz=z-o.z, rr=o.r+extra; if(dx*dx+dz*dz < rr*rr) return true; }
     return false;
   }
   const whiteMat=new THREE.MeshBasicMaterial({color:0xffffff}); whiteMat.fog=false;
@@ -1501,7 +1509,7 @@ const CONFIG = {
 
   function buildWorld(){
     while(worldRoot.children.length) worldRoot.remove(worldRoot.children[0]);
-    exits=[]; pedestrians=[];
+    exits=[]; pedestrians=[]; extraObs={}; outsideObs=[];
     const W=C.COLS*T, D=C.ROWS*T;
 
     // 1階(地下2階)の床（全面）
@@ -1998,6 +2006,7 @@ const CONFIG = {
         gm.position.set(gx, base+0.55, gz); worldRoot.add(gm);
         const bar=new THREE.Mesh(new THREE.BoxGeometry(perpx?0.42:0.16,0.12,perpy?0.42:0.16), gleam);
         bar.position.set(gx, base+1.05, gz); worldRoot.add(bar);
+        addObs(ef, gx, gz, 0.26);   // 改札機は通り抜け不可（レーンの間を通る）
       }
       // 通り抜け可能な広場の範囲（プレイヤー・通行人が出入りできる外のスペース）。owidは改札と共通(開口幅)
       const dep=T*3.0;
@@ -2071,40 +2080,56 @@ const CONFIG = {
     const benchWoodM=new THREE.MeshLambertMaterial({color:0x9c6b3f}), benchLegM=new THREE.MeshLambertMaterial({color:0x3d444b});
     const planterM=new THREE.MeshLambertMaterial({color:0x7c8088}), hedgeM=new THREE.MeshLambertMaterial({color:0x3f7d46});
     const bollardM=new THREE.MeshLambertMaterial({color:0xb9422e}), bollardTopM=new THREE.MeshBasicMaterial({color:0xf2f2f2}); bollardTopM.toneMapped=false;
+    // 出口の広場（改札からの動線）には何も置かない＝クリアまでの道を塞がない
+    const inPlaza=(x,z,m)=>{ for(const e of exits){ const p=e.plaza; if(!p) continue;
+      if(x>=p.minX-m && x<=p.maxX+m && z>=p.minZ-m && z<=p.maxZ+m) return true; } return false; };
     // 街灯（ポール＋アーム＋ランプヘッド＋グロー）
-    const lamp=(x,z)=>{ const gy=outsideY(z); const p=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.18,5.2,8),poleM); p.position.set(x,gy+2.6,z); worldRoot.add(p);
+    const lamp=(x,z)=>{ if(inPlaza(x,z,1.6)) return; const gy=outsideY(z); const p=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.18,5.2,8),poleM); p.position.set(x,gy+2.6,z); worldRoot.add(p);
       const arm=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.12,0.12),armM); arm.position.set(x+0.5,gy+5.0,z); worldRoot.add(arm);
       const head=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.28,0.42),armM); head.position.set(x+1.0,gy+4.86,z); worldRoot.add(head);
-      const l=new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.34),lampM); l.rotation.x=-Math.PI/2; l.position.set(x+1.0,gy+4.71,z); worldRoot.add(l); };
+      const l=new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.34),lampM); l.rotation.x=-Math.PI/2; l.position.set(x+1.0,gy+4.71,z); worldRoot.add(l);
+      outsideObs.push({x,z,r:0.24}); };
     // 街路樹（幹＋2段の葉）
-    const tree=(x,z)=>{ const gy=outsideY(z), th=2.6+Math.random()*1.4;
+    const tree=(x,z)=>{ if(inPlaza(x,z,1.6)) return; const gy=outsideY(z), th=2.6+Math.random()*1.4;
       const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.32,th,7),trunkM); tr.position.set(x,gy+th/2,z); worldRoot.add(tr);
       const lm=leafMs[(Math.random()*leafMs.length)|0];
       const c1=new THREE.Mesh(new THREE.SphereGeometry(1.5+Math.random()*0.4,8,7),lm); c1.position.set(x,gy+th+0.7,z); c1.scale.y=0.85; worldRoot.add(c1);
-      const c2=new THREE.Mesh(new THREE.SphereGeometry(1.1+Math.random()*0.3,8,7),lm); c2.position.set(x+(Math.random()-0.5)*0.8,gy+th+1.7,z+(Math.random()-0.5)*0.8); worldRoot.add(c2); };
+      const c2=new THREE.Mesh(new THREE.SphereGeometry(1.1+Math.random()*0.3,8,7),lm); c2.position.set(x+(Math.random()-0.5)*0.8,gy+th+1.7,z+(Math.random()-0.5)*0.8); worldRoot.add(c2);
+      outsideObs.push({x,z,r:0.38}); };
     // ベンチ（座面＋背もたれ＋脚）
-    const bench=(x,z,rot)=>{ const gy=outsideY(z), g2=new THREE.Group();
+    const bench=(x,z,rot)=>{ if(inPlaza(x,z,1.6)) return; const gy=outsideY(z), g2=new THREE.Group();
       const seat=new THREE.Mesh(new THREE.BoxGeometry(2.0,0.14,0.6),benchWoodM); seat.position.y=0.55; g2.add(seat);
       const back=new THREE.Mesh(new THREE.BoxGeometry(2.0,0.5,0.12),benchWoodM); back.position.set(0,0.85,-0.24); g2.add(back);
       for(const sx of [-0.85,0.85]){ const lg=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.55,0.5),benchLegM); lg.position.set(sx,0.27,0); g2.add(lg); }
-      g2.position.set(x,gy,z); g2.rotation.y=rot; worldRoot.add(g2); };
+      g2.position.set(x,gy,z); g2.rotation.y=rot; worldRoot.add(g2);
+      outsideObs.push({x,z,r:1.0}); };
     // 植込み（縁石ボックス＋緑）
-    const planter=(x,z)=>{ const gy=outsideY(z); const box=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.5,1.0),planterM); box.position.set(x,gy+0.25,z); worldRoot.add(box);
-      const h=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,0.8),hedgeM); h.position.set(x,gy+0.7,z); worldRoot.add(h); };
+    const planter=(x,z)=>{ if(inPlaza(x,z,1.6)) return; const gy=outsideY(z); const box=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.5,1.0),planterM); box.position.set(x,gy+0.25,z); worldRoot.add(box);
+      const h=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,0.8),hedgeM); h.position.set(x,gy+0.7,z); worldRoot.add(h);
+      outsideObs.push({x:x-0.75,z,r:0.65},{x:x+0.75,z,r:0.65}); };
     // ボラード（車止め）
-    const bollard=(x,z)=>{ const gy=outsideY(z); const b=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,0.9,8),bollardM); b.position.set(x,gy+0.45,z); worldRoot.add(b);
-      const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,0.1,8),bollardTopM); cap.position.set(x,gy+0.9,z); worldRoot.add(cap); };
+    const bollard=(x,z)=>{ if(inPlaza(x,z,1.2)) return; const gy=outsideY(z); const b=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,0.9,8),bollardM); b.position.set(x,gy+0.45,z); worldRoot.add(b);
+      const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,0.1,8),bollardTopM); cap.position.set(x,gy+0.9,z); worldRoot.add(cap);
+      outsideObs.push({x,z,r:0.18}); };
     const er=R*0.45;
     for(let x=4; x<W; x+=13){ lamp(x,-er); lamp(x,D+er);
       const m=(x/13|0)%3; if(m===0){ tree(x+6,-er); tree(x+6,D+er); } else if(m===1){ bench(x+6,-er+1.2,0); bench(x+6,D+er-1.2,Math.PI); } else { planter(x+6,-er); planter(x+6,D+er); } }
     for(let z=4; z<D; z+=13){ lamp(-er,z); lamp(W+er,z);
       const m=(z/13|0)%3; if(m===0){ tree(-er,z+6); tree(W+er,z+6); } else if(m===1){ bench(-er+1.2,z+6,Math.PI/2); bench(W+er-1.2,z+6,-Math.PI/2); } else { planter(-er,z+6); planter(W+er,z+6); } }
-    // 広場の縁にボラードを並べる（駅前ロータリー風）
+    // 広場の縁にボラードを並べる（駅前ロータリー風。出口の動線は空ける）
     for(let x=T*3; x<W-T*3; x+=3.2){ bollard(x,-R*0.16); bollard(x,D+R*0.16); }
-    // 駅前の自販機列＆タクシー（北口・南口それぞれ）
-    const vrow=(x,z,rot,n)=>{ for(let k=0;k<n;k++){ const g2=makeVendingMachine(); g2.position.set(x+Math.cos(rot)*k*1.15, outsideY(z), z+Math.sin(rot)*k*1.15); g2.rotation.y=rot+Math.PI/2; worldRoot.add(g2); } };
+    // 駅前の自販機列＆タクシー（北口・南口それぞれ。出口の動線は避ける）
+    const vrow=(x,z,rot,n)=>{ for(let k=0;k<n;k++){ const vx=x+Math.cos(rot)*k*1.15, vz=z+Math.sin(rot)*k*1.15;
+      if(inPlaza(vx,vz,1.6)) continue;
+      const g2=makeVendingMachine(); g2.position.set(vx, outsideY(vz), vz); g2.rotation.y=rot+Math.PI/2; worldRoot.add(g2);
+      outsideObs.push({x:vx,z:vz,r:0.6}); } };
     vrow(W*0.5-3, -R*0.3, 0, 5); vrow(W*0.5-3, D+R*0.3, 0, 5);
-    for(const [tx,tz] of [[W*0.3,-R*0.36],[W*0.62,-R*0.36],[W*0.3,D+R*0.36],[W*0.62,D+R*0.36]]) worldRoot.add(makeTaxi(tx,outsideY(tz),tz, Math.random()*6.28));
+    for(const [tx,tz] of [[W*0.3,-R*0.36],[W*0.62,-R*0.36],[W*0.3,D+R*0.36],[W*0.62,D+R*0.36]]){
+      if(inPlaza(tx,tz,3.0)) continue;
+      const rot=Math.random()*6.28; makeTaxi(tx,outsideY(tz),tz,rot);
+      const fx=Math.sin(rot), fz=Math.cos(rot);   // 車体の前後2つの円で当たり判定
+      outsideObs.push({x:tx+fx*1.2,z:tz+fz*1.2,r:1.05},{x:tx-fx*1.2,z:tz-fz*1.2,r:1.05});
+    }
   }
   let _vendTexC=null;
   function vendTex(){   // 自販機の光る前面（飲料の列）
@@ -2205,7 +2230,8 @@ const CONFIG = {
     correctExitNo=goalExit.no;
     const sLvl = startExit.level || NF, od=1.2*T;   // 改札の外への距離（広場の中）
     player.x=startExit.x + startExit.ox*od; player.z=startExit.z + startExit.oy*od;
-    player.y=(sLvl-1)*FH; player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
+    player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
+    player.y=standYAt(player.x,player.z);   // 広場は坂とブレンドされるので実際の足元の高さで開始
     buildDrunkAndKonbini(player.x, player.z, sLvl);   // 酔っ払い（各ホーム）＆コンビニを配置
     goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(goalExit.level), (lang==="en"?goalExit.dirEn:goalExit.dirName));
     hud.classList.remove("hidden");
@@ -2279,11 +2305,24 @@ const CONFIG = {
   const fwd=new THREE.Vector3(), right=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
   function playerCanStand(x,z){
     const r=PLAYER_R, out=(X,Z)=>anyExitPlaza(X,Z)||inOutsideRing(X,Z,2);
-    if(out(x-r,z-r)&&out(x+r,z-r)&&out(x-r,z+r)&&out(x+r,z+r)) return true;  // 体の四隅すべてが屋外なら可＝壁に食い込まない（外側のすり抜け防止）
+    // 万一障害物の内側に居る場合は「出る移動」を許可（固まらない保険）
+    const inside=obstacleHit(player.x,player.z,0,player.level) || outsideHit(player.x,player.z,0);
+    if(!inside && outsideHit(x,z,0.35)) return false;      // 屋外の設置物（街灯/ベンチ/タクシー等）はすり抜け不可
+    if(out(x-r,z-r)&&out(x+r,z-r)&&out(x-r,z+r)&&out(x+r,z+r))
+      return inside || !obstacleHit(x,z,0.45,player.level); // 体の四隅すべてが屋外なら可。ただし改札機などは広場側からも通れない
     // 通行人ではプレイヤーを止めない（人混みは下の「速度ドラッグ」で表現）＝階段の中央などで詰まる/合体して止まるバグを解消
     if(!canStand(x,z,PLAYER_R,player.level)) return false;
-    if(obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店（これと壁だけが障害）
+    if(!inside && obstacleHit(x,z,0.45,player.level)) return false;   // 地下2階の中央オブジェクト／地上の売店／トイレ・自販機・改札機
     return true;
+  }
+  // その位置に立った時の足元の高さ（updatePlayer の高さ決定と同じ規則。状態は変更しない）
+  function standYAt(x,z){
+    const si=stairInfo(x,z,player.level); if(si) return si.y;
+    const pe=anyExitPlaza(x,z);
+    if(pe){ const fb=(pe.level-1)*FH, outward=(x-pe.x)*pe.ox+(z-pe.z)*pe.oy, tt=Math.max(0,Math.min(1,outward/(T*2.5)));
+      return fb*(1-tt) + outsideY(z)*tt; }
+    if(inOutsideRing(x,z,2)) return outsideY(z);
+    return (player.level-1)*FH;
   }
   // プレイヤー周囲の通行人の密度（人混みで遅くなる＝動きにくいが、止まりはしない。少人数なら減速なし）
   function crowdDrag(){
@@ -2326,8 +2365,10 @@ const CONFIG = {
     const px0=player.x, pz0=player.z;
     let vx=fwd.x*mf+right.x*ms, vz=fwd.z*mf+right.z*ms; const len=Math.hypot(vx,vz);
     if(len>0){ vx=vx/len*spd*dt; vz=vz/len*spd*dt;
-      if(playerCanStand(player.x+vx,player.z)) player.x+=vx;
-      if(playerCanStand(player.x,player.z+vz)) player.z+=vz;
+      // 高さの瞬間ジャンプ防止：階段のランプへ横から乗る/途中から飛び降りる移動はブロック
+      const okY=(X,Z)=> Math.abs(standYAt(X,Z)-player.y) <= 1.1;
+      if(playerCanStand(player.x+vx,player.z) && okY(player.x+vx,player.z)) player.x+=vx;
+      if(playerCanStand(player.x,player.z+vz) && okY(player.x,player.z+vz)) player.z+=vz;
     }
     if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
       if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
@@ -2345,21 +2386,29 @@ const CONFIG = {
         player.level = (player.y>=1.5*FH)?NF:2;
       } else { player.y=(player.level-1)*FH; }
     }
-    if(player.level!==player.plevel){ player.plevel=player.level; sfxFloor(); }   // 階移動の音
+    if(player.level!==player.plevel){ player.plevel=player.level;
+      // 屋外（広場/外周の坂）でのレベル切替は「坂の途中の区分け」なので音を鳴らさない（出口前を横切るたびに鳴るのを防ぐ）
+      if(!anyExitPlaza(player.x,player.z) && !inOutsideRing(player.x,player.z,2)) sfxFloor(); }   // 階移動の音
     camera.position.set(player.x, player.y+(crouching?C.CROUCH_EYE:C.EYE_HEIGHT), player.z);
   }
 
   function entCanStand(x,z,r,f){ return canStand(x,z,r,f) && !obstacleHit(x,z,0.3,f); }
   function moveToward(ent,tx,tz,speed,dt,r){
     const f=ent.level;
+    // 万一障害物の内側に居る場合は「出る移動」を許可（湧き/ワープが重なっても永久に固まらない）
+    const inside=obstacleHit(ent.x,ent.z,0,f);
+    // 高さの瞬間ジャンプ防止：階段の途中へ横から乗る/降りる移動は不可（端から正しく上り下りする）
+    const okY=(X,Z)=>{ if(ent.y===undefined) return true;
+      const si=stairInfo(X,Z,f); return Math.abs((si?si.y:(f-1)*FH)-ent.y) <= 1.1; };
+    const ok=(X,Z)=> canStand(X,Z,r,f) && (inside || !obstacleHit(X,Z,0.3,f)) && okY(X,Z);
     let dx=tx-ent.x, dz=tz-ent.z; const len=Math.hypot(dx,dz);
     if(len>0.001){ dx=dx/len*speed*dt; dz=dz/len*speed*dt;
       const bx=ent.x,bz=ent.z;
-      if(entCanStand(ent.x+dx,ent.z,r,f)) ent.x+=dx;
-      if(entCanStand(ent.x,ent.z+dz,r,f)) ent.z+=dz;
+      if(ok(ent.x+dx,ent.z)) ent.x+=dx;
+      if(ok(ent.x,ent.z+dz)) ent.z+=dz;
       if(ent.x===bx&&ent.z===bz){
         const alt=Math.abs(dx)>Math.abs(dz)?[[0,speed*dt],[0,-speed*dt]]:[[speed*dt,0],[-speed*dt,0]];
-        for(const [ax,az] of alt){ if(entCanStand(ent.x+ax,ent.z+az,r,f)){ent.x+=ax;ent.z+=az;break;} }
+        for(const [ax,az] of alt){ if(ok(ent.x+ax,ent.z+az)){ent.x+=ax;ent.z+=az;break;} }
       }
     }
   }
@@ -2404,7 +2453,9 @@ const CONFIG = {
   function enemyTransitStep(chaser, dt){
     const t=chaser.transit; t.t=(t.t||0)+dt;
     if(t.t>30){ // 安全策：万一渡れず詰まったら目的フロアへワープして到着扱い（人数を必ず保つ）
-      const tiles=allFloorTiles(t.goal).filter(q=>!stairTileSet.has(q.x+","+q.y));
+      let tiles=allFloorTiles(t.goal).filter(q=>{ if(stairTileSet.has(q.x+","+q.y)) return false;
+        const w=tileToWorld(q.x,q.y); return !obstacleHit(w.x,w.z,0.4,t.goal); });   // 店舗/トイレの上には出さない
+      if(!tiles.length) tiles=allFloorTiles(t.goal).filter(q=>!stairTileSet.has(q.x+","+q.y));
       if(tiles.length){ const q=tiles[(Math.random()*tiles.length)|0], w=tileToWorld(q.x,q.y); chaser.x=w.x; chaser.z=w.z; chaser.level=t.goal; }
       return;
     }
@@ -2518,8 +2569,9 @@ const CONFIG = {
     const sp= dodge? C.PED_DODGE_SPEED
                    : (allowStair? C.PED_SPEED*1.8 : (p.rush>0? C.PED_RUSH_SPEED : C.PED_SPEED)); // 階段は速く通り抜け＝詰まりにくく
     const nx=vx*sp*dt, nz=vz*sp*dt, f=p.level;
-    const ok=(X,Z)=> allowStair ? entCanStand(X,Z,PED_R,f)
-                                : (canStandPed(X,Z,PED_R,f) && !obstacleHit(X,Z,0.3,f));
+    const inside=obstacleHit(p.x,p.z,0,f);   // 障害物の内側に居たら「出る移動」を許可（押し込まれても固まらない）
+    const ok=(X,Z)=> allowStair ? (canStand(X,Z,PED_R,f) && (inside || !obstacleHit(X,Z,0.3,f)))
+                                : (canStandPed(X,Z,PED_R,f) && (inside || !obstacleHit(X,Z,0.3,f)));
     let moved=false;
     if(ok(p.x+nx,p.z)){ p.x+=nx; moved=true; }
     if(ok(p.x,p.z+nz)){ p.z+=nz; moved=true; }
@@ -2593,14 +2645,14 @@ const CONFIG = {
       let best=null,bd=-1; for(const s of src){ const d=Math.hypot(s.x-player.x,s.z-player.z); if(d>bd){ bd=d; best=s; } }
       for(const cand of [best, src[(Math.random()*src.length)|0]]){
         const tx=cand.x+(Math.random()-0.5)*T*0.5, tz=cand.z+(Math.random()-0.5)*T*0.5;
-        if(canStand(tx,tz,PED_R,g)){ X=tx; Z=tz; break; }
-        if(canStand(cand.x,cand.z,PED_R,g)){ X=cand.x; Z=cand.z; break; }
+        if(canStand(tx,tz,PED_R,g) && !obstacleHit(tx,tz,0.3,g)){ X=tx; Z=tz; break; }
+        if(canStand(cand.x,cand.z,PED_R,g) && !obstacleHit(cand.x,cand.z,0.3,g)){ X=cand.x; Z=cand.z; break; }
       }
     }
     if(!(X===X)){   // 最終手段でもプレイヤーから遠い床を選ぶ（中央ポップを避ける）
       const pool=pedPool[g]||[]; let bd=-1;
       for(let k=0;k<14 && pool.length;k++){ const t=pool[(Math.random()*pool.length)|0], w=tileToWorld(t.x,t.y);
-        const d=Math.hypot(w.x-player.x,w.z-player.z); if(d>bd && canStand(w.x,w.z,PED_R,g)){ bd=d; X=w.x; Z=w.z; } }
+        const d=Math.hypot(w.x-player.x,w.z-player.z); if(d>bd && canStand(w.x,w.z,PED_R,g) && !obstacleHit(w.x,w.z,0.3,g)){ bd=d; X=w.x; Z=w.z; } }
     }
     if(!(X===X)){ const pool=pedPool[g]||[]; if(pool.length){ const t=pool[(Math.random()*pool.length)|0], w=tileToWorld(t.x,t.y); X=w.x; Z=w.z; } else { X=p.x; Z=p.z; } }
     p.x=X; p.z=Z; p.level=g; p.y=(g-1)*FH; p.ride=null; p.lastStair=-1; p.trip=-1; p.roleT=1+Math.random()*4; setPedRole(p);
@@ -2839,6 +2891,24 @@ const CONFIG = {
     g.rotation.y=Math.atan2(dirX,dirZ);                // local +z を通路方向(dir)へ向ける（背面が壁）
     return g;
   }
+  // そのタイルを塞いでもフロアの連結（他の全床タイルへの到達性）が保たれるか
+  function tileBlockSafe(f,bx,by){
+    const g=grids[f]; let total=0, start=null;
+    for(let y=0;y<C.ROWS;y++)for(let x=0;x<C.COLS;x++){
+      if(g[y][x]!==0) continue; total++;
+      if(!start && !(x===bx&&y===by)) start=[x,y];
+    }
+    if(!start) return false;
+    const seen=new Set([start[0]+","+start[1]]), q=[start]; let i=0;
+    while(i<q.length){ const [x,y]=q[i++];
+      for(const [dx,dy] of DIRS4){ const nx=x+dx, ny=y+dy;
+        if(nx<0||ny<0||nx>=C.COLS||ny>=C.ROWS) continue;
+        if(g[ny][nx]!==0 || (nx===bx&&ny===by)) continue;
+        const k=nx+","+ny; if(seen.has(k)) continue; seen.add(k); q.push([nx,ny]);
+      }
+    }
+    return seen.size >= total-1;   // 塞いだ1タイル以外すべて到達できる
+  }
   function randUndergroundTile(f, avoidStart, sx, sz){
     let tiles=allFloorTiles(f).filter(t=>!stairTileSet.has(t.x+","+t.y) && !(obsBlock[f]&&obsBlock[f].has(t.x+","+t.y)));
     if(f===1) tiles=tiles.filter(t=>!(CENTER_COLS.includes(t.x)&&OBJ_ROWS.includes(t.y)));
@@ -2872,9 +2942,13 @@ const CONFIG = {
         decoyDrunks.push({ x:w.x, z:w.z, group:g, sway:Math.random()*6 });
       }
     }
-    // コンビニ（地下のランダムな階・位置）
-    const kf=Math.random()<0.5?1:2, ktk=randUndergroundTile(kf,false), kw=tileToWorld(ktk.x,ktk.y);
+    // コンビニ（地下のランダムな階・位置）。通路を塞いでもフロアが分断されないタイルだけを選ぶ
+    const kf=Math.random()<0.5?1:2;
+    let ktk=randUndergroundTile(kf,false);
+    for(let tr=0; tr<40 && !tileBlockSafe(kf,ktk.x,ktk.y); tr++) ktk=randUndergroundTile(kf,false);
+    const kw=tileToWorld(ktk.x,ktk.y);
     worldRoot.add(buildKonbini(kw.x,(kf-1)*FH,kw.z));
+    addObs(kf, kw.x, kw.z, 2.2);   // 店舗はすり抜け不可（KONBINI_DIST=6.0 で立ち寄り判定は届く）
     konbini={ x:kw.x, z:kw.z, level:kf };
     buildToilets(); resetToiletUrge();   // トイレ配置＆尿意タイマー初期化
   }
@@ -2917,8 +2991,10 @@ const CONFIG = {
         if(exits.some(e=>e.level===f && Math.hypot(e.x-w.x,e.z-w.z)<T*2.4)) continue;   // 出口の前は避ける
         if(vendPlaced.some(v=>v.level===f && Math.hypot(v.x-w.x,v.z-w.z)<minSep)) continue;
         const g=makeVendingMachine();                                                   // 背面を壁へ寄せる
-        g.position.set(w.x - c.dx*(T/2-0.42), (f-1)*FH, w.z - c.dy*(T/2-0.42));
+        const gx=w.x - c.dx*(T/2-0.42), gz=w.z - c.dy*(T/2-0.42);
+        g.position.set(gx, (f-1)*FH, gz);
         g.rotation.y=Math.atan2(c.dx,c.dy); worldRoot.add(g);
+        addObs(f, gx, gz, 0.7);                                                         // 自販機はすり抜け不可
         vendPlaced.push({x:w.x,z:w.z,level:f}); vendTileSet.add(f+","+c.x+","+c.y); made++;
       }
     }
@@ -2935,7 +3011,11 @@ const CONFIG = {
         if(vendTileSet.has(f+","+c.x+","+c.y)) continue;   // 自販機のあるタイルは避ける
         const w=tileToWorld(c.x,c.y);
         if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<minSep)) continue;   // 近すぎる重複は避ける
-        worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));   // 正方形・壁埋め込み・大きなトイレマーク＋青いサイン（青い柱は統合済み）
+        worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));   // 化粧タイルのトイレ（入口＋男女ピクト＋青サイン）
+        // 当たり判定：本体（壁寄り）を2つの円でカバー。タイル中央は通れる＝通行人の流れを塞がない
+        const bx=w.x - c.dx*1.35, bz=w.z - c.dy*1.35;
+        addObs(f, bx - c.dy*0.9, bz + c.dx*0.9, 1.2);
+        addObs(f, bx + c.dy*0.9, bz - c.dx*0.9, 1.2);
         toilets.push({x:w.x,z:w.z,level:f,beacon:null}); made++;
       }
     }
@@ -3213,6 +3293,12 @@ const CONFIG = {
     requestAnimationFrame(loop);
   }
 
+  // 自動テスト用の読み取りフック（ゲーム挙動には影響しない）
+  window._dbg={ get player(){return player}, get chasers(){return chasers}, get drunk(){return drunk},
+    get toilets(){return toilets}, get exits(){return exits}, get stairs(){return stairs},
+    get pedestrians(){return pedestrians}, get konbini(){return konbini}, get carrying(){return carrying},
+    pcs:(x,z)=>playerCanStand(x,z), obst:(x,z,e,f)=>obstacleHit(x,z,e,f), standY:(x,z)=>standYAt(x,z),
+    stair:(x,z,l)=>stairInfo(x,z,l), C, T, FH };
   setupTouch(); loop();
 })();
 </script>
