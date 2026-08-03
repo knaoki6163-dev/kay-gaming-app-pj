@@ -207,6 +207,14 @@ const CONFIG = {
   EXIT_COUNT: 17,       // 出口の数（すべて最上階。1つが正解）
   CORRECT_EXIT: null,   // 正解番号。null ならランダム
 
+  // ===== ゲームモード：ライセンスカード回収（新）/ 酔っ払い運搬（旧・保存用） =====
+  DRUNK_MODE: false,    // true に戻すと旧「酔っ払いを運ぶ」ゲームが復活する（コードは全て残してある）
+  GOAL_ANY_EXIT: true,  // true=カードを持って「どの出口」から出てもクリア / false=指定された正解の出口のみ
+  CARD_TOUCH: 2.2,      // ライセンスカードにこの距離まで近づくと取得
+  // ライセンスの判定タイム(秒)。[BLACKの上限, GOLDの上限, BLUEの上限]。これを超えると GREEN
+  LICENSE_TIMES: [210, 330, 480],
+  LICENSE_DETECT_PENALTY: 25, // 敵に見つかった1回につき、この秒数ぶんタイムを悪く扱う
+
   SHOW_MAP: true,       // 左上のテスト用マップ
   FOG: true,
 };
@@ -251,9 +259,10 @@ const CONFIG = {
 
 <div id="start" class="overlay">
   <h1 id="title">新宿駅から出られない</h1>
-  <p id="desc">酔っ払いを見つけて、地上の出口まで送り届けろ。<br>
-     連れている間は走れない。ヤクザに捕まるな。<br>
+  <p id="desc">指定されたホームのライセンスカードを取り、駅から脱出しろ。<br>
+     ヤクザに捕まるな。タイムで免許のランクが決まる。<br>
      [WASD]移動 [マウス]視点 [しゃがむ]隠れる</p>
+  <div id="bestLic"></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
     <button id="devBtn">開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span></button>
     <button id="userBtn">ユーザーとしてプレイ<br><span style="font-size:12px;opacity:.85">（マップなし）</span></button>
@@ -328,7 +337,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.135";
+  const APP_VERSION = "Ver.136";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -344,7 +353,10 @@ const CONFIG = {
   const descEl = document.getElementById("desc");
   const LANG = {
     title:{ ja:'新宿駅から出られない', en:'Shinjuku Station Meltdown' },
-    desc:{ ja:'酔っ払いを見つけて、地上の出口まで送り届けろ。<br>連れている間は走れない。ヤクザに捕まるな。<br>[WASD]移動 [マウス]視点 [しゃがむ]隠れる',
+    desc:{ ja:'指定されたホームのライセンスカードを取り、駅から脱出しろ。<br>ヤクザに捕まるな。タイムで免許のランクが決まる。<br>[WASD]移動 [マウス]視点 [しゃがむ]隠れる',
+           en:'Grab the license card on the assigned platform, then escape the station.<br>Don\'t get caught by the yakuza. Your time decides your license rank.<br>[WASD] Move  [Mouse] Look  [Crouch] Hide' },
+    // 旧モード（DRUNK_MODE=true）用の説明文。戻せるように残す
+    descDrunk:{ ja:'酔っ払いを見つけて、地上の出口まで送り届けろ。<br>連れている間は走れない。ヤクザに捕まるな。<br>[WASD]移動 [マウス]視点 [しゃがむ]隠れる',
            en:'Find the drunk and carry him to a ground-level exit.<br>You can\'t run while carrying him. Don\'t get caught by the yakuza.<br>[WASD] Move  [Mouse] Look  [Crouch] Hide' },
     devBtn:{ ja:'開発者としてプレイ<br><span style="font-size:12px;opacity:.85">（マップ表示）</span>', en:'Play as Developer<br><span style="font-size:12px;opacity:.85">(map shown)</span>' },
     userBtn:{ ja:'ユーザーとしてプレイ<br><span style="font-size:12px;opacity:.85">（マップなし）</span>', en:'Play as User<br><span style="font-size:12px;opacity:.85">(no map)</span>' },
@@ -389,15 +401,41 @@ const CONFIG = {
     resFailed:{ ja:(tm,d,dr)=>'脱出失敗…　タイム '+tm+'　/　見つかった '+d+'回・手放し '+dr+'回', en:(tm,d,dr)=>'Failed…　Time '+tm+'　/　Spotted '+d+'×・Dropped '+dr+'×' },
     resRank:{ ja:'あなたのランク：', en:'Your rank: ' },
     resTime:{ ja:tm=>'タイム '+tm, en:tm=>'Time '+tm },
+    // ===== ライセンスカード・モード =====
+    carryCard:{ ja:'🎫 ライセンスカード所持中', en:'🎫 License card in hand' },
+    mGetCard:{ ja:'ライセンスカードを取る', en:'Grab the license card' },
+    goalCardInit:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームのライセンスカードを取りに行け',
+                   en:ln=>'▶ Go get the license card on the B1 '+ln+' platform' },
+    goalCardFind:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームのライセンスカードを探せ（黄色い光の柱）',
+                   en:ln=>'▶ Find the license card on the B1 '+ln+' platform (yellow light)' },
+    goalCardOut:{ ja:'▶ カード確保！ 改札を通って駅から脱出しろ', en:'▶ Card secured! Get out through any ticket gate' },
+    goalCardOutFixed:{ ja:(fl,nm)=>'▶ カード確保！ '+fl+'の'+nm+'（改札）から脱出しろ',
+                       en:(fl,nm)=>'▶ Card secured! Escape through '+nm+' ('+fl+')' },
+    msgCardGot:{ ja:'🎫 ライセンスカードを手に入れた！ 出口へ急げ', en:'🎫 Got the license card! Head for an exit' },
+    msgCardNeed:{ ja:'先にライセンスカードを取ってこい！', en:'Grab the license card first!' },
+    licGreen:{ ja:'グリーン', en:'GREEN' }, licBlue:{ ja:'ブルー', en:'BLUE' },
+    licGold:{ ja:'ゴールド', en:'GOLD' }, licBlack:{ ja:'ブラック', en:'BLACK' },
+    licNone:{ ja:'免許なし', en:'NO LICENSE' },
+    licSuffix:{ ja:'ライセンス', en:' LICENSE' },
+    resEscaped:{ ja:(tm,d)=>'脱出成功！　タイム '+tm+'　/　見つかった '+d+'回',
+                 en:(tm,d)=>'Escaped! Time '+tm+'　/　Spotted '+d+'×' },
+    resCaught:{ ja:(tm,d)=>'脱出失敗…　タイム '+tm+'　/　見つかった '+d+'回',
+                en:(tm,d)=>'Failed…　Time '+tm+'　/　Spotted '+d+'×' },
+    resLicense:{ ja:'取得ライセンス', en:'License earned' },
+    resBest:{ ja:'自己ベスト', en:'Best' },
+    resNewBest:{ ja:'🎉 自己ベスト更新！', en:'🎉 New personal best!' },
+    bestLic:{ ja:'最高ライセンス', en:'Best license' },
+    bestNone:{ ja:'まだ免許を取得していません', en:'No license earned yet' },
   };
   function tr(key, ...a){ const e=LANG[key]; if(e==null) return key; const v=(e[lang]!=null)?e[lang]:e.ja; return typeof v==="function"?v(...a):v; }
   function applyLang(){
     const titleEl=document.getElementById("title");
     if(titleEl && titleEl.textContent!=="一時停止中") titleEl.textContent = tr('title');   // 一時停止表示は上書きしない
-    descEl.innerHTML = tr('desc');
+    descEl.innerHTML = tr(CONFIG.DRUNK_MODE?'descDrunk':'desc');
     devBtn.innerHTML = tr('devBtn'); userBtn.innerHTML = tr('userBtn');
     restartBtn.textContent = tr('restart');
-    carryEl.textContent = tr('carry'); lostEl.textContent = tr('lost');
+    carryEl.textContent = tr(CONFIG.DRUNK_MODE?'carry':'carryCard'); lostEl.textContent = tr('lost');
+    if(typeof renderBestLicense==="function") renderBestLicense();   // タイトルの「最高ライセンス」表示
     missionTitleEl.textContent = tr('missionTitle');
     mapToggle.textContent = mapCollapsed ? tr('mapOpen') : tr('mapClose');
     langBtn.textContent = lang==="ja" ? "EN" : "日本語";
@@ -409,6 +447,49 @@ const CONFIG = {
     li.querySelector(".chk").textContent = done ? "✅" : "⬜";
     li.querySelector(".mtxt").textContent = text;
   }
+
+  // ---------- ライセンス（グリーン→ブルー→ゴールド→ブラックの4段階。数字が大きいほど上位） ----------
+  const LICENSES=[
+    { key:'licGreen', bg:'#2ecf6b', fg:'#06301a', edge:'#1c9a4c' },
+    { key:'licBlue',  bg:'#2f7fe0', fg:'#eaf2ff', edge:'#1a5aad' },
+    { key:'licGold',  bg:'#f5c02a', fg:'#4a3400', edge:'#c08f00' },
+    { key:'licBlack', bg:'#15181d', fg:'#e8c760', edge:'#e8c760' },
+  ];
+  // タイム（＋見つかった回数のペナルティ）からライセンスを決める。閾値は CONFIG.LICENSE_TIMES（仮置き・調整可）
+  function computeLicense(t, detected){
+    const eff = t + (detected||0)*CONFIG.LICENSE_DETECT_PENALTY;
+    const th = CONFIG.LICENSE_TIMES;
+    if(eff<=th[0]) return 3;   // ブラック
+    if(eff<=th[1]) return 2;   // ゴールド
+    if(eff<=th[2]) return 1;   // ブルー
+    return 0;                  // グリーン
+  }
+  // 免許カード風のチップ（HTML）。ブラックも読めるよう背景色つきで描く
+  function licenseChip(i, big){
+    if(i<0||i>=LICENSES.length)
+      return "<span style='display:inline-block;padding:"+(big?"10px 20px":"4px 12px")+";border-radius:8px;"
+        + "background:#2a2f36;color:#98a1ab;font-weight:900;font-size:"+(big?"26px":"15px")+"'>"+tr('licNone')+"</span>";
+    const L=LICENSES[i];
+    return "<span style='display:inline-block;padding:"+(big?"10px 22px":"4px 12px")+";border-radius:8px;"
+      + "background:"+L.bg+";color:"+L.fg+";border:2px solid "+L.edge+";font-weight:900;"
+      + "font-size:"+(big?"28px":"15px")+";letter-spacing:1px"+(big?";box-shadow:0 0 16px "+L.edge:"")+"'>"
+      + tr(L.key)+tr('licSuffix')+"</span>";
+  }
+  // 最高ライセンスの保存（localStorage。file:// やプライベートモードでも落ちないよう try/catch）
+  const BEST_KEY="exitShinjuku.bestLicense";
+  function loadBestLicense(){ try{ const v=localStorage.getItem(BEST_KEY); if(v==null) return -1;
+    const n=parseInt(v,10); return (isFinite(n)&&n>=0&&n<LICENSES.length)?n:-1; }catch(e){ return -1; } }
+  function saveBestLicense(i){ try{ localStorage.setItem(BEST_KEY, String(i)); }catch(e){} }
+  let bestLicense=loadBestLicense();
+  const bestLicEl=document.getElementById("bestLic");
+  function renderBestLicense(){
+    if(!bestLicEl) return;
+    if(CONFIG.DRUNK_MODE){ bestLicEl.innerHTML=""; return; }   // 旧モードでは表示しない
+    bestLicEl.innerHTML = (bestLicense<0)
+      ? "<span style='color:#8d96a0;font-size:14px'>"+tr('bestNone')+"</span>"
+      : "<span style='color:#9aa3ad;font-size:14px'>"+tr('bestLic')+"： </span>"+licenseChip(bestLicense,false);
+  }
+
   applyLang();   // 初期表示（言語ラベル等を確定）
 
   // フロア名（最下層から）：地下1階(プラットホーム)→地上1階(デパート)→地上2階(改札/出口)
@@ -980,6 +1061,8 @@ const CONFIG = {
   let upField={};   // 各地下フロアから上の階段へ向かう経路場（案内看板の正しい向きの判定用）
   const PLAYER_R=T*0.22, CHASER_R=T*0.22, PED_R=T*0.1, DRUNK_R=T*0.18;
   let drunk=null, konbini=null, carrying=false, playerTrail=[], drunkMsg="", drunkMsgT=0, decoyDrunks=[]; // 運搬ジレンマ用
+  let licenseCard=null;   // ライセンスカード（新モードの目標アイテム）。carrying=カード所持
+  let enteredStation=false;   // 一度でも駅構内（広場・外周でない場所）に入ったか＝スタート地点での催促表示を抑える
   let statDetect=0, statDrop=0;   // ランク評価用：見つかった回数 / 酔っ払いを手放した回数
   let metEnemyUnderground=false;  // 地下(B2/B1)で一度でも敵に遭遇したか。未遭遇なら地上の遭遇率を倍に
   // 新宿駅の路線を参考にした5ホームの路線（色は実路線風）。ミッションはどれか1つを指定
@@ -2243,8 +2326,10 @@ const CONFIG = {
     player.x=startExit.x + startExit.ox*od; player.z=startExit.z + startExit.oy*od;
     player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
     player.y=standYAt(player.x,player.z);   // 広場は坂とブレンドされるので実際の足元の高さで開始
-    buildDrunkAndKonbini(player.x, player.z, sLvl);   // 酔っ払い（各ホーム）＆コンビニを配置
-    goalEl.textContent=tr('goalInit', lineName(targetLane), floorName(goalExit.level), (lang==="en"?goalExit.dirEn:goalExit.dirName));
+    buildDrunkAndKonbini(player.x, player.z, sLvl);   // 新モード=ライセンスカード配置 / 旧モード=酔っ払い＆コンビニ
+    goalEl.textContent = C.DRUNK_MODE
+      ? tr('goalInit', lineName(targetLane), floorName(goalExit.level), (lang==="en"?goalExit.dirEn:goalExit.dirName))
+      : tr('goalCardInit', lineName(targetLane));
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.toggle("hidden", userMode);   // 現在地は開発者プレイのみ表示
@@ -2278,6 +2363,24 @@ const CONFIG = {
   function endGame(cleared){ running=false; if(document.exitPointerLock)document.exitPointerLock();
     resultText.textContent=cleared?"CLEAR!":"GAME OVER"; resultText.className=cleared?"clear":"over";
     const t=gameTime;
+    if(!C.DRUNK_MODE){   // ===== 新モード：ライセンス判定 =====
+      const li = cleared ? computeLicense(t, statDetect) : -1;
+      const prevBest = bestLicense;
+      const isNewBest = (li>=0 && li>prevBest);
+      if(isNewBest){ bestLicense=li; saveBestLicense(li); }
+      renderBestLicense();
+      resultInfo.innerHTML =
+          (cleared ? tr('resEscaped', fmtTime(t), statDetect) : tr('resCaught', fmtTime(t), statDetect))
+        + "<br><br><span style='font-size:15px;color:#9aa3ad'>"+tr('resLicense')+"</span><br>"
+        + "<div style='margin:10px 0'>"+licenseChip(li,true)+"</div>"
+        + (isNewBest ? "<div style='color:#ffd23a;font-weight:900;margin-top:6px'>"+tr('resNewBest')+"</div>" : "")
+        + "<div style='margin-top:12px;font-size:14px;color:#9aa3ad'>"+tr('resBest')+"： "+licenseChip(bestLicense,false)+"</div>";
+      resultScreen.classList.remove("hidden"); cross.classList.add("hidden"); carryEl.classList.add("hidden"); lostEl.classList.add("hidden");
+      dashEl.classList.add("hidden"); missionEl.classList.add("hidden");
+      toiletWarnEl.style.opacity=0; toiletCountEl.style.display="none"; isDashing=false; speedLEl.style.opacity=0; speedREl.style.opacity=0;
+      if(cleared) sfxClear(); else sfxOver();
+      return;
+    }
     let ri, score, head;
     if(cleared){
       ri=computeRankIndex(t);
@@ -2341,10 +2444,12 @@ const CONFIG = {
     camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize(); right.crossVectors(fwd,up).normalize();
     wMash=Math.max(0, wMash-dt*3.0); if(lostT>0) lostT-=dt;   // W連打メーターの減衰（毎秒3回より速く連打で発動）
     const mashing = wMash>=1.8;                              // 連打中＝ダッシュ意思
-    crouching = (keys["c"]||keys["control"]) && !carrying;   // 連れている間はしゃがめない
+    // カードは軽いので所持中も自由に動ける（旧モードの酔っ払い運搬時だけ、しゃがみ・ダッシュを禁止）
+    const carryPenalty = carrying && C.DRUNK_MODE;
+    crouching = (keys["c"]||keys["control"]) && !carryPenalty;   // 酔っ払いを連れている間はしゃがめない
     // ダッシュ・スタミナ（ゲージ制）：残量ぶんだけ走れる。途中でやめても残りは0にならず保持され、
     // 走っていない間にそこから徐々に回復する（例：満タン10秒で3秒走って歩きに戻れば、残り7秒はすぐ使える）
-    const wantDash = mashing && !carrying && !crouching;
+    const wantDash = mashing && !carryPenalty && !crouching;
     if(dashActive){ if(!wantDash || dashStam<=0) dashActive=false; }        // やめる/使い切り→残量は保持
     else if(wantDash && dashStam>=C.DASH_MIN_START) dashActive=true;        // 残量が少なすぎる時だけ始動不可（点滅防止）
     if(dashActive) dashStam=Math.max(0, dashStam-dt);                       // ダッシュ中は消費
@@ -2352,10 +2457,10 @@ const CONFIG = {
     const dashing = dashActive; isDashing=dashing;
     let spd;
     if(crouching) spd=C.CROUCH_SPEED;
-    else if(carrying){
+    else if(carryPenalty){                                   // 旧モード：酔っ払いを連れている間だけ減速＋連打で手放す
       if(mashing){ dropDrunk(); spd=C.MOVE_SPEED; }          // 連れて連打→手が離れて通常速度に
       else spd=C.WALK_SPEED;                                 // 連れて歩き＝はぐれない
-    } else spd = dashing ? C.DASH_SPEED : C.MOVE_SPEED;      // 手ぶら：ダッシュ中=8.0 / それ以外=通常
+    } else spd = dashing ? C.DASH_SPEED : C.MOVE_SPEED;      // カード所持中も通常/ダッシュ速度のまま（ペナルティなし）
     let mf=0,ms=0;
     if(keys["w"]||keys["arrowup"]||mashing)mf+=1; if(keys["s"]||keys["arrowdown"])mf-=1;  // 連打中は前進継続
     if(keys["d"]||keys["arrowright"])ms+=1; if(keys["a"]||keys["arrowleft"])ms-=1;
@@ -2375,7 +2480,7 @@ const CONFIG = {
         }
       }
     }
-    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carrying?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
+    if(player.x!==px0 || player.z!==pz0){ stepAcc+=dt; const stepInt=carryPenalty?stepNext:(dashing?0.20:0.42);   // 連れている間はランダム／ダッシュ中は速い足音
       if(stepAcc>=stepInt){ stepAcc=0; sfxStep(); stepNext=0.12+Math.random()*0.28; } }
     const si=stairInfo(player.x,player.z,player.level);
     if(si){ player.y=si.y; player.level=si.t>=0.5?si.lvl+1:si.lvl; }
@@ -2391,6 +2496,8 @@ const CONFIG = {
         player.level = (player.y>=1.5*FH)?NF:2;
       } else { player.y=(player.level-1)*FH; }
     }
+    // 駅構内（広場でも外周でもない場所）に入ったら記録＝スタート直後の催促メッセージを抑制する
+    if(!enteredStation && !anyExitPlaza(player.x,player.z) && !inOutsideRing(player.x,player.z,2)) enteredStation=true;
     if(player.level!==player.plevel){ player.plevel=player.level;
       // 屋外（広場/外周の坂）でのレベル切替は「坂の途中の区分け」なので音を鳴らさない（出口前を横切るたびに鳴るのを防ぐ）
       if(!anyExitPlaza(player.x,player.z) && !inOutsideRing(player.x,player.z,2)) sfxFloor(); }   // 階移動の音
@@ -2926,15 +3033,63 @@ const CONFIG = {
       if(!avoidStart || Math.hypot(w.x-sx,w.z-sz)>T*9) return t; }
     return tiles[(Math.random()*tiles.length)|0];
   }
+  // ---------- ライセンスカード（新モードの目標アイテム） ----------
+  let _cardTexC=null;
+  function licenseCardTex(){   // 免許証風のカード（未記入＝これから発行される）
+    const w=256,h=168,cv=document.createElement("canvas");cv.width=w;cv.height=h;const g=cv.getContext("2d");
+    const bg=g.createLinearGradient(0,0,w,h); bg.addColorStop(0,"#fdfefe"); bg.addColorStop(1,"#dfe8f0");
+    g.fillStyle=bg; g.fillRect(0,0,w,h);
+    g.strokeStyle="#c8a94a"; g.lineWidth=5; g.strokeRect(4,4,w-8,h-8);        // 金の縁
+    g.fillStyle="#123a6b"; g.fillRect(10,10,w-20,34);                          // ヘッダー帯
+    g.fillStyle="#fff"; g.textAlign="center"; g.textBaseline="middle";
+    g.font="bold 20px sans-serif"; g.fillText("新宿駅 構内走行免許",w/2,28);
+    g.fillStyle="#243447"; g.fillRect(18,54,58,74);                            // 顔写真枠
+    g.fillStyle="#8fa2b6"; g.beginPath(); g.arc(47,80,15,0,6.28); g.fill();
+    g.beginPath(); g.moveTo(47,98); g.lineTo(26,126); g.lineTo(68,126); g.closePath(); g.fill();
+    g.textAlign="left"; g.fillStyle="#39424d"; g.font="bold 13px sans-serif";
+    g.fillText("SHINJUKU NAVIGATOR",86,64);
+    g.fillStyle="#7c8794"; g.font="12px sans-serif";
+    g.fillText("LICENSE  No. ------",86,84);
+    g.fillText("RANK   : ----------",86,102);
+    g.fillText("VALID  : ----/--/--",86,120);
+    g.fillStyle="#c8a94a"; g.fillRect(86,132,120,6);                           // 金のライン
+    g.fillStyle="#123a6b"; g.textAlign="center"; g.font="bold 12px sans-serif";
+    g.fillText("LICENSE CARD",w/2,152);
+    const t=new THREE.CanvasTexture(cv); t.anisotropy=4; return t;
+  }
+  function buildLicenseCardObj(x,z,baseY){   // 浮遊して回るカード＋黄色い光の柱＋足元のリング
+    if(!_cardTexC) _cardTexC=licenseCardTex();
+    const grp=new THREE.Group();
+    const face=new THREE.MeshBasicMaterial({map:_cardTexC}); face.toneMapped=false;
+    const edge=new THREE.MeshBasicMaterial({color:0xf0e2b0}); edge.toneMapped=false;
+    const card=new THREE.Mesh(new THREE.BoxGeometry(1.5,1.0,0.06), [edge,edge,edge,edge,face,face]);
+    card.position.y=1.25; grp.add(card);
+    const halo=new THREE.Mesh(new THREE.RingGeometry(0.75,1.05,20), new THREE.MeshBasicMaterial({color:0xffd23a,transparent:true,opacity:0.45,side:THREE.DoubleSide}));
+    halo.material.toneMapped=false; halo.rotation.x=-Math.PI/2; halo.position.y=0.06; grp.add(halo);   // 足元の光る輪
+    grp.position.set(x,baseY,z); worldRoot.add(grp);
+    const beacon=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,FH*0.82,8),
+      new THREE.MeshBasicMaterial({color:0xffd23a, transparent:true, opacity:0.5})); beacon.material.toneMapped=false;
+    beacon.position.set(x,baseY+FH*0.43,z); worldRoot.add(beacon);
+    return { x, z, level:1, group:grp, card, beacon, spin:0, taken:false };
+  }
   function buildDrunkAndKonbini(sx,sz,slevel){
     drunk=null; konbini=null; carrying=false; playerTrail=[]; drunkMsg=""; drunkMsgT=0; decoyDrunks=[]; lostT=0; wMash=0; statDetect=0; statDrop=0;
+    licenseCard=null; enteredStation=false;
     dashActive=false; dashStam=C.DASH_DUR;   // 開始時はスタミナ満タン
     metEnemyUnderground=false;   // 地下の遭遇フラグをリセット
-    // 各ホーム(地下2階)に酔っ払いを1人ずつ。targetLane が連れ戻す対象（目標）
+    // 各ホーム(地下2階)の代表タイル。targetLane が目標（新＝カードの置き場所 / 旧＝酔っ払い）
     const laneTile=(li)=>{ const [x0,x1]=LANES[li], xc=x0+1, tiles=[];
       for(let y=PLAT_TOP;y<=PLAT_BOT;y++)for(let x=x0;x<=x1;x++)
         if(grids[1][y][x]===0 && !stairTileSet.has(x+","+y) && !(x===xc&&OBJ_ROWS.includes(y))) tiles.push({x,y});
       const t=tiles.length?tiles[(Math.random()*tiles.length)|0]:{x:x0,y:PLAT_TOP}; return tileToWorld(t.x,t.y); };
+    if(!C.DRUNK_MODE){
+      // 新モード：指定ホームにライセンスカードを1枚だけ置く（酔っ払い・デコイ・コンビニは作らない）
+      const w=laneTile(targetLane);
+      licenseCard=buildLicenseCardObj(w.x,w.z,0);
+      buildToilets(); resetToiletUrge();   // トイレは駅の風景として設置（尿意システムは DRUNK_MODE=false では動かない）
+      relocatePedsOutOfObstacles();
+      return;
+    }
     for(let li=0; li<LANES.length; li++){
       const w=laneTile(li), isTarget=(li===targetLane);
       const g=makeHuman(isTarget?0x8e44ad:0x717784, 0x3a2a4a, 0xe6a07a); worldRoot.add(g); // 目標=紫/デコイ=灰
@@ -2960,7 +3115,10 @@ const CONFIG = {
     addObs(kf, kw.x, kw.z, 2.2);   // 店舗はすり抜け不可（KONBINI_DIST=6.0 で立ち寄り判定は届く）
     konbini={ x:kw.x, z:kw.z, level:kf };
     buildToilets(); resetToiletUrge();   // トイレ配置＆尿意タイマー初期化
-    // トイレ/コンビニ（湧きの後に設置される）に重なって湧いていた通行人を空きタイルへ移す
+    relocatePedsOutOfObstacles();
+  }
+  // トイレ/コンビニ（歩行者の湧きより後に設置される）に重なって湧いた通行人を空きタイルへ移す
+  function relocatePedsOutOfObstacles(){
     for(const p of pedestrians){
       if(!obstacleHit(p.x,p.z,0.4,p.level)) continue;
       const pool=pedPool[p.level]||[];
@@ -3030,6 +3188,7 @@ const CONFIG = {
         if(toilets.some(t=>t.level===f && Math.hypot(t.x-w.x,t.z-w.z)<minSep)) continue;   // 近すぎる重複は避ける
         if(f===1 && trainDoors.some(td=>Math.hypot(td.x-w.x,td.z-w.z)<T*0.7)) continue;    // 電車ドアの乗降動線は塞がない
         if(drunk && drunk.level===f && Math.hypot(drunk.x-w.x,drunk.z-w.z)<T*0.9) continue; // 酔っ払いの立ち位置に被せない
+        if(licenseCard && licenseCard.level===f && Math.hypot(licenseCard.x-w.x,licenseCard.z-w.z)<T*1.1) continue; // カードの上に被せない
         if(f===1 && decoyDrunks.some(dd=>Math.hypot(dd.x-w.x,dd.z-w.z)<T*0.9)) continue;
         worldRoot.add(buildToiletBlock(w.x,(f-1)*FH,w.z, c.dx, c.dy));   // 化粧タイルのトイレ（入口＋男女ピクト＋青サイン）
         // 当たり判定：本体（壁寄り）を2つの円でカバー。タイル中央は通れる＝通行人の流れを塞がない
@@ -3139,6 +3298,20 @@ const CONFIG = {
       }
     }
   }
+  // 運搬対象の更新：新モード=ライセンスカード / 旧モード(DRUNK_MODE)=酔っ払い
+  function updateCarry(dt){ if(C.DRUNK_MODE) updateDrunk(dt); else updateCard(dt); }
+  function updateCard(dt){
+    if(drunkMsgT>0) drunkMsgT-=dt;
+    const lc=licenseCard; if(!lc || lc.taken) return;
+    lc.spin+=dt;
+    lc.card.rotation.y=lc.spin*1.6;                                  // ゆっくり回る
+    lc.card.position.y=1.25+Math.sin(lc.spin*2.2)*0.12;              // ふわふわ浮く
+    if(player.level===lc.level && Math.hypot(player.x-lc.x,player.z-lc.z)<C.CARD_TOUCH){   // 取得
+      lc.taken=true; carrying=true;
+      lc.group.visible=false; if(lc.beacon) lc.beacon.visible=false;
+      setDrunkMsg("msgCardGot",3.5); sfxFloor();
+    }
+  }
   function updateDrunk(dt){
     for(const d of decoyDrunks){ d.sway+=dt*3.3; d.group.position.set(d.x,FOOT_LIFT,d.z); d.group.rotation.set(0,Math.sin(d.sway*0.4)*0.5,Math.sin(d.sway)*0.14); } // 他ホームの酔っ払い（デコイ・その場でゆらゆら。回転し続けない）
     if(!drunk) return;
@@ -3185,11 +3358,22 @@ const CONFIG = {
       // 正面(画面内)で捕獲。ただし密着がCATCH_GRAB_TIME続いたら向きに関係なく掴む（視点回し悪用の対策）
       if(dd<C.CATCH_DIST && (front>=Math.cos(C.CATCH_FOV*Math.PI/180) || (chaser.gripT||0)>=C.CATCH_GRAB_TIME)){ endGame(false); return; }
     }
-    // 改札を通って外（広場）へ出たらクリア＝正解の出口で、改札(壁面)より外側に出たか
-    // 広場どうしが重なっていても正解の出口の広場を直接判定（別出口の広場が先にヒットして判定漏れしない）
+    // 改札を通って外（広場）へ出たらクリア。改札(壁面)より外側に出たかを判定する
+    // 新モードは GOAL_ANY_EXIT=true ならどの出口でもよい。false（旧モード相当）なら正解の出口のみ
+    // 広場どうしが重なっていても対象の広場を直接判定する（別出口の広場が先にヒットして判定漏れしない）
+    const anyExitOk = !C.DRUNK_MODE && C.GOAL_ANY_EXIT;
     let ce=null;
-    for(const e of exits){ if(e.no!==correctExitNo || !e.plaza || e.plaza.level!==player.level) continue;
+    for(const e of exits){ if(!e.plaza || e.plaza.level!==player.level) continue;
+      if(!anyExitOk && e.no!==correctExitNo) continue;
       const p=e.plaza; if(player.x>=p.minX&&player.x<=p.maxX&&player.z>=p.minZ&&player.z<=p.maxZ){ ce=e; break; } }
+    if(ce && !C.DRUNK_MODE){          // ===== 新モード：カードを持って改札の外へ出たらクリア =====
+      const outward=(player.x-ce.x)*ce.ox + (player.z-ce.z)*ce.oy;
+      if(outward>T*0.4){
+        if(carrying){ endGame(true); return; }
+        else if(enteredStation && drunkMsgT<=0) setDrunkMsg("msgCardNeed",1.5);   // カード未取得で出ようとした（スタート直後は出さない）
+      }
+      return;
+    }
     if(ce){
       const outward=(player.x-ce.x)*ce.ox + (player.z-ce.z)*ce.oy;   // 改札より外（プラス）か
       if(outward>T*0.4){
@@ -3227,7 +3411,13 @@ const CONFIG = {
     for(const p of pedestrians){ if(p.level!==F) continue; mapCtx.beginPath(); mapCtx.arc((p.x/T)*cs,(p.z/T)*cs,cs*0.16,0,6.28); mapCtx.fill(); }
     for(const chaser of chasers){ if(chaser.level!==F) continue; mapCtx.fillStyle=chaser.showAlert?"#ff2d2d":"#b03b3b"; mapCtx.beginPath();
       mapCtx.arc((chaser.x/T)*cs,(chaser.z/T)*cs,cs*0.4,0,6.28); mapCtx.fill(); }
-    // 酔っ払い（デコイ=灰、目標=マゼンタ＋リング）
+    // ライセンスカード（未取得のとき＝金色の四角＋リング）
+    if(licenseCard && !licenseCard.taken && licenseCard.level===F){
+      const cx2=(licenseCard.x/T)*cs, cy2=(licenseCard.z/T)*cs;
+      mapCtx.fillStyle="#ffd23a"; mapCtx.fillRect(cx2-cs*0.42,cy2-cs*0.3,cs*0.84,cs*0.6);
+      mapCtx.strokeStyle="#fff"; mapCtx.lineWidth=2; mapCtx.beginPath(); mapCtx.arc(cx2,cy2,cs*0.7,0,6.28); mapCtx.stroke();
+    }
+    // 酔っ払い（デコイ=灰、目標=マゼンタ＋リング）※旧モードのみ
     mapCtx.fillStyle="#8a8f97";
     for(const d of decoyDrunks){ if(F!==1) break; mapCtx.beginPath(); mapCtx.arc((d.x/T)*cs,(d.z/T)*cs,cs*0.3,0,6.28); mapCtx.fill(); }
     if(drunk && drunk.level===F){ const dx=(drunk.x/T)*cs, dy=(drunk.z/T)*cs;
@@ -3267,21 +3457,27 @@ const CONFIG = {
   function loop(){
     const dt=Math.min(clock.getDelta(),0.05);
     if(running){
-      updatePlayer(dt); updateChasers(dt); updateDrunk(dt); updateCrowd(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
+      updatePlayer(dt); updateChasers(dt); updateCarry(dt); updateCrowd(dt); updatePedestrians(dt); updateDeco(dt); updateBoarders(flick); checkResult();
       drawMinimap();
       gameTime+=dt; timerEl.textContent="TIME "+fmtTime(gameTime);
       const alert = chasers.some(c=>c.showAlert);
       if(alert && !alertPrev){ sfxAlert(); statDetect++; }   // 新たに見つかった瞬間（回数を記録）
       alertPrev = alert;
-      // 目標表示（運搬の状態を反映。一時メッセージ優先）
+      // 目標表示（状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=tr(drunkMsg);
+      else if(!C.DRUNK_MODE){   // 新モード：カード未取得＝目標ホーム / 取得後＝出口へ
+        if(!carrying) goalEl.textContent = tr('goalCardFind', lineName(targetLane));
+        else if(C.GOAL_ANY_EXIT) goalEl.textContent = tr('goalCardOut');
+        else { const ce=exits.find(e=>e.no===correctExitNo); const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):"";
+          goalEl.textContent = tr('goalCardOutFixed', floorName(ce?ce.level:NF), cn); }
+      }
       else if(carrying){ const ce=exits.find(e=>e.no===correctExitNo); const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):""; goalEl.textContent = tr('goalDeliver', floorName(ce?ce.level:NF), cn); }
       else if(drunk && drunk.level!==1) goalEl.textContent = tr('goalFetch', floorName(drunk.level));   // 手放した後＝酔っ払いの現在フロアを指す
       else goalEl.textContent = tr('goalFind', lineName(targetLane));
-      carryEl.classList.toggle("hidden", !carrying);            // 連れている＝緑
-      lostEl.classList.toggle("hidden", carrying || lostT<=0);  // はぐれた＝赤（一定時間）
-      // ミッション・ボックス（酔っぱらいを助ける＝回収中で緑チェック、手放すと赤✖に戻る）
-      setMission(m1El, carrying, tr('mRescue'));
+      carryEl.classList.toggle("hidden", !carrying);            // 所持中＝緑
+      lostEl.classList.toggle("hidden", !C.DRUNK_MODE || carrying || lostT<=0);  // はぐれた＝赤（旧モードのみ）
+      // ミッション・ボックス（①カード取得/酔っ払い救出 ②駅から脱出）
+      setMission(m1El, carrying, tr(C.DRUNK_MODE?'mRescue':'mGetCard'));
       setMission(m2El, false, tr('mEscape'));
       floorEl.textContent = tr('here', floorName(player.level));
       mapLabel.textContent = (lang==="en"?"MAP ("+floorName(player.level)+")":"MAP（"+floorName(player.level)+"）");
@@ -3330,7 +3526,9 @@ const CONFIG = {
     get pedestrians(){return pedestrians}, get konbini(){return konbini}, get carrying(){return carrying},
     pcs:(x,z)=>playerCanStand(x,z), obst:(x,z,e,f)=>obstacleHit(x,z,e,f), standY:(x,z)=>standYAt(x,z),
     stair:(x,z,l)=>stairInfo(x,z,l), get dashStam(){return dashStam}, get dashActive(){return dashActive},
-    get gameTime(){return gameTime}, C, T, FH };
+    get gameTime(){return gameTime}, get licenseCard(){return licenseCard}, get bestLicense(){return bestLicense},
+    get targetLane(){return targetLane}, get correctExitNo(){return correctExitNo},
+    lic:(t,d)=>computeLicense(t,d), end:c=>endGame(c), C, T, FH };
   setupTouch(); loop();
 })();
 </script>
