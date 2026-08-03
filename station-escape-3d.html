@@ -209,7 +209,7 @@ const CONFIG = {
 
   // ===== ゲームモード：ライセンスカード回収（新）/ 酔っ払い運搬（旧・保存用） =====
   DRUNK_MODE: false,    // true に戻すと旧「酔っ払いを運ぶ」ゲームが復活する（コードは全て残してある）
-  GOAL_ANY_EXIT: true,  // true=カードを持って「どの出口」から出てもクリア / false=指定された正解の出口のみ
+  GOAL_ANY_EXIT: false, // true=カードを持って「どの出口」から出てもクリア / false=指定された正解の出口のみ（従来どおり）
   CARD_TOUCH: 2.2,      // ライセンスカードにこの距離まで近づくと取得
   // ライセンスの判定タイム(秒)。[BLACKの上限, GOLDの上限, BLUEの上限]。これを超えると GREEN
   LICENSE_TIMES: [210, 330, 480],
@@ -337,7 +337,7 @@ const CONFIG = {
   let gameTime = 0;
   const fmtTime=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   const versionEl = document.getElementById("version");
-  const APP_VERSION = "Ver.136";
+  const APP_VERSION = "Ver.137";
   versionEl.textContent = APP_VERSION;
   document.getElementById("verHud").textContent = APP_VERSION;   // 常時表示（キャッシュ確認用）
   const _touch = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -406,6 +406,8 @@ const CONFIG = {
     mGetCard:{ ja:'ライセンスカードを取る', en:'Grab the license card' },
     goalCardInit:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームのライセンスカードを取りに行け',
                    en:ln=>'▶ Go get the license card on the B1 '+ln+' platform' },
+    goalCardInitFixed:{ ja:(ln,fl,nm)=>'▶ 地下1階【'+ln+'】ホームのカードを取り、'+fl+'の'+nm+'から脱出しろ',
+                        en:(ln,fl,nm)=>'▶ Grab the card on the B1 '+ln+' platform, then escape via '+nm+' ('+fl+')' },
     goalCardFind:{ ja:ln=>'▶ 地下1階【'+ln+'】ホームのライセンスカードを探せ（黄色い光の柱）',
                    en:ln=>'▶ Find the license card on the B1 '+ln+' platform (yellow light)' },
     goalCardOut:{ ja:'▶ カード確保！ 改札を通って駅から脱出しろ', en:'▶ Card secured! Get out through any ticket gate' },
@@ -2327,9 +2329,11 @@ const CONFIG = {
     player.pitch=0; player.yaw=Math.atan2(startExit.ox, startExit.oy); player.level=sLvl; player.plevel=sLvl; // 改札の方(駅構内)を向く
     player.y=standYAt(player.x,player.z);   // 広場は坂とブレンドされるので実際の足元の高さで開始
     buildDrunkAndKonbini(player.x, player.z, sLvl);   // 新モード=ライセンスカード配置 / 旧モード=酔っ払い＆コンビニ
+    const gxName = (lang==="en"?goalExit.dirEn:goalExit.dirName);
     goalEl.textContent = C.DRUNK_MODE
-      ? tr('goalInit', lineName(targetLane), floorName(goalExit.level), (lang==="en"?goalExit.dirEn:goalExit.dirName))
-      : tr('goalCardInit', lineName(targetLane));
+      ? tr('goalInit', lineName(targetLane), floorName(goalExit.level), gxName)
+      : (C.GOAL_ANY_EXIT ? tr('goalCardInit', lineName(targetLane))
+                         : tr('goalCardInitFixed', lineName(targetLane), floorName(goalExit.level), gxName));
     hud.classList.remove("hidden");
     cross.classList.toggle("hidden",isTouch);
     floorEl.classList.toggle("hidden", userMode);   // 現在地は開発者プレイのみ表示
@@ -3465,11 +3469,12 @@ const CONFIG = {
       alertPrev = alert;
       // 目標表示（状態を反映。一時メッセージ優先）
       if(drunkMsgT>0) goalEl.textContent=tr(drunkMsg);
-      else if(!C.DRUNK_MODE){   // 新モード：カード未取得＝目標ホーム / 取得後＝出口へ
-        if(!carrying) goalEl.textContent = tr('goalCardFind', lineName(targetLane));
-        else if(C.GOAL_ANY_EXIT) goalEl.textContent = tr('goalCardOut');
-        else { const ce=exits.find(e=>e.no===correctExitNo); const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):"";
-          goalEl.textContent = tr('goalCardOutFixed', floorName(ce?ce.level:NF), cn); }
+      else if(!C.DRUNK_MODE){   // 新モード：カード未取得＝目標ホーム(＋指定出口) / 取得後＝その出口へ
+        const ce=C.GOAL_ANY_EXIT?null:exits.find(e=>e.no===correctExitNo);
+        const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):"", cf=floorName(ce?ce.level:NF);
+        if(!carrying) goalEl.textContent = ce ? tr('goalCardInitFixed', lineName(targetLane), cf, cn)
+                                              : tr('goalCardFind', lineName(targetLane));
+        else goalEl.textContent = ce ? tr('goalCardOutFixed', cf, cn) : tr('goalCardOut');
       }
       else if(carrying){ const ce=exits.find(e=>e.no===correctExitNo); const cn=ce?(lang==="en"?ce.dirEn:ce.dirName):""; goalEl.textContent = tr('goalDeliver', floorName(ce?ce.level:NF), cn); }
       else if(drunk && drunk.level!==1) goalEl.textContent = tr('goalFetch', floorName(drunk.level));   // 手放した後＝酔っ払いの現在フロアを指す
